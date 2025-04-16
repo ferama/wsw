@@ -7,8 +7,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/mattn/go-shellwords"
 )
 
 const (
@@ -19,7 +17,7 @@ const (
 func newRunner() *runner {
 	return &runner{
 		Quit: make(chan bool),
-		Name: "commander",
+		Name: "wsw",
 	}
 }
 
@@ -78,11 +76,7 @@ func (c *runner) Start() {
 	l.Println("starting...", os.Args[1:])
 	osArgs := os.Args[1:]
 
-	parser := shellwords.NewParser()
-	parsed, err := parser.Parse(strings.Join(osArgs, ""))
-	if err != nil {
-		l.Fatal(err)
-	}
+	parsed := splitWindowsArgs(strings.Join(osArgs, " "))
 
 	if len(parsed) == 0 {
 		l.Fatal("no command found")
@@ -91,7 +85,7 @@ func (c *runner) Start() {
 	cmd := parsed[0]
 	args := parsed[1:]
 	l.Printf("cmd: %s, args: %s", cmd, args)
-	c.execCmd, _ = RunCmd(c.Name, cmd, args, os.Environ())
+	c.execCmd, _ = runCmd(c.Name, cmd, args, os.Environ())
 
 	// without this call, the ProcessState is not fullfilled and we
 	// don't have anything to check. Run in a goroutine to take status

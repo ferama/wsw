@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -32,7 +33,7 @@ func getLogger(name string) *log.Logger {
 
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 
-	fileName := filepath.Join(GetLauncherDir(), fmt.Sprintf("%s.log", name))
+	fileName := filepath.Join(getRunnerDir(), fmt.Sprintf("%s.log", name))
 	jack := &lumberjack.Logger{
 		Filename:   fileName,
 		MaxSize:    1,
@@ -47,7 +48,7 @@ func getLogger(name string) *log.Logger {
 	return logger
 }
 
-func GetLauncherDir() string {
+func getRunnerDir() string {
 	ex, err := os.Executable()
 	if err != nil {
 		panic(err)
@@ -56,8 +57,8 @@ func GetLauncherDir() string {
 	return exPath
 }
 
-func RunCmd(name string, command string, args []string, env []string) (*exec.Cmd, error) {
-	l := getLogger("launcher")
+func runCmd(name string, command string, args []string, env []string) (*exec.Cmd, error) {
+	l := getLogger("wsw")
 	cmd := exec.Command(command, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -95,4 +96,34 @@ func printStream(name string, stream io.ReadCloser) {
 		l := getLogger(name)
 		l.Print(line)
 	}
+}
+
+func splitWindowsArgs(command string) []string {
+	var args []string
+	var current strings.Builder
+	inQuotes := false
+
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+
+		switch c {
+		case '"':
+			inQuotes = !inQuotes
+		case ' ':
+			if inQuotes {
+				current.WriteByte(c)
+			} else if current.Len() > 0 {
+				args = append(args, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteByte(c)
+		}
+	}
+
+	if current.Len() > 0 {
+		args = append(args, current.String())
+	}
+
+	return args
 }
