@@ -57,7 +57,7 @@ func getRunnerDir() string {
 }
 
 func runCmd(name string, command string, args []string, env []string) (*exec.Cmd, error) {
-	l := getLogger("wsw")
+	l := getLogger(name)
 	cmd := exec.Command(command, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

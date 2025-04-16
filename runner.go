@@ -13,11 +13,14 @@ const (
 	STATUS_STARTED
 )
 
-func newRunner() *runner {
-	return &runner{
+func newRunner(name string) *runner {
+	r := &runner{
 		Quit: make(chan bool),
-		Name: "wsw",
+		Name: name,
 	}
+	l := getLogger(r.Name)
+	l.Printf("runner created: %s", name)
+	return r
 }
 
 // The runner is a generic application that

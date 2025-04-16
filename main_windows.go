@@ -67,7 +67,7 @@ func installService(name string, args string) error {
 	s, err := m.CreateService(name, exepath, mgr.Config{
 		DisplayName: name,
 		StartType:   mgr.StartAutomatic,
-	}, fmt.Sprintf("--path=\"%s\"", args))
+	}, fmt.Sprintf("-service-name=\"%s\"", name), fmt.Sprintf("-path=\"%s\"", args))
 	if err != nil {
 		return err
 	}
@@ -118,15 +118,28 @@ func uninstallService(name string) error {
 }
 
 func main() {
+	isWindowsService, err := wsvc.IsWindowsService()
+	if err != nil {
+		panic(err)
+	}
+
+	serviceName := "wsw"
+	if serviceNameFlag != "" {
+		serviceName = fmt.Sprintf("%s-%s", serviceName, unwrapQuotes(serviceNameFlag))
+	}
+	if isWindowsService {
+		serviceName = unwrapQuotes(serviceNameFlag)
+	}
+
 	if installServiceFlag && wrappedPathFlag != "" {
-		err := installService("wsw", wrappedPathFlag)
+		err := installService(serviceName, wrappedPathFlag)
 		if err != nil {
 			log.Fatalf("Install failed: %v", err)
 		}
 		return
 	}
 	if uninstallServiceFlag {
-		err := uninstallService("wsw")
+		err := uninstallService(serviceName)
 		if err != nil {
 			log.Fatalf("Uninstall failed: %v", err)
 		}
@@ -138,12 +151,7 @@ func main() {
 		return
 	}
 
-	isWindowsService, err := wsvc.IsWindowsService()
-	if err != nil {
-		panic(err)
-	}
-
-	runner := newRunner()
+	runner := newRunner(serviceName)
 	if isWindowsService {
 		wrappedPathFlag = unwrapQuotes(wrappedPathFlag)
 		prg := &app{

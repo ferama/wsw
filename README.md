@@ -1,11 +1,9 @@
-#
+# wsw
 
 ```shell
-sc.exe create wsw start= auto DisplayName= WSW binpath= "C:\Users\Administrator\wsw.exe -path \"C:\Users\Administrator\ltest.exe C:\Users\Administrator\ltest.log\""
+# install service
+.\wsw.exe -install-service -path "C:\Users\Administrator\ltest.exe C:\Users\Administrator\ltest.log" -service-name test
 
-sc.exe start wsw
-
-sc.exe query wsw
-
-sc.exe stop wsw; sc.exe delete wsw
+# uninstall service
+.\wsw.exe -uninstall-service -service-name test
 ```
