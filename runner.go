@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"os"
 	"os/exec"
 	"strings"
@@ -65,18 +64,15 @@ func (c *runner) Start() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	flag.Parse()
-
 	if !c.watcherStarted {
 		c.watcherStarted = true
 		go c.watcher()
 	}
 
 	l := getLogger(c.Name)
-	l.Println("starting...", os.Args[1:])
-	osArgs := os.Args[1:]
+	l.Printf("starting... '%s'", wrappedPathFlag)
 
-	parsed := splitWindowsArgs(strings.Join(osArgs, " "))
+	parsed := strings.Fields(wrappedPathFlag)
 
 	if len(parsed) == 0 {
 		l.Fatal("no command found")
@@ -84,7 +80,7 @@ func (c *runner) Start() {
 
 	cmd := parsed[0]
 	args := parsed[1:]
-	l.Printf("cmd: %s, args: %s", cmd, args)
+	l.Printf("cmd: '%s', args: '%s'", cmd, args)
 	c.execCmd, _ = runCmd(c.Name, cmd, args, os.Environ())
 
 	// without this call, the ProcessState is not fullfilled and we

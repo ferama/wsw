@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -98,32 +97,9 @@ func printStream(name string, stream io.ReadCloser) {
 	}
 }
 
-func splitWindowsArgs(command string) []string {
-	var args []string
-	var current strings.Builder
-	inQuotes := false
-
-	for i := 0; i < len(command); i++ {
-		c := command[i]
-
-		switch c {
-		case '"':
-			inQuotes = !inQuotes
-		case ' ':
-			if inQuotes {
-				current.WriteByte(c)
-			} else if current.Len() > 0 {
-				args = append(args, current.String())
-				current.Reset()
-			}
-		default:
-			current.WriteByte(c)
-		}
+func unwrapQuotes(s string) string {
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
 	}
-
-	if current.Len() > 0 {
-		args = append(args, current.String())
-	}
-
-	return args
+	return s
 }

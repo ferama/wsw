@@ -1,7 +1,7 @@
 #
 
 ```shell
-sc.exe create wsw start= auto DisplayName= WSW binpath= "C:\Users\Administrator\wsw.exe C:\Users\Administrator\ltest.exe C:\Users\Administrator\ltest.log"
+sc.exe create wsw start= auto DisplayName= WSW binpath= "C:\Users\Administrator\wsw.exe -path \"C:\Users\Administrator\ltest.exe C:\Users\Administrator\ltest.log\""
 
 sc.exe start wsw
 
