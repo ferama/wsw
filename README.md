@@ -1,6 +1,6 @@
 # WSW - Windows Service Wrapper
 
-> 💡 A tiny, practical tool that lets **any executable** run as a **real Windows service**, with zero boilerplate.
+> 💡 A tiny, practical tool that lets **any executable or script** run as a **real Windows service**, with zero boilerplate.
 
 ---
 
@@ -94,7 +94,7 @@ go build -o wsw.exe .
 Because quoting in `sc.exe` is a nightmare. For example:
 
 ```powershell
-sc create mysvc binPath= "\"C:\path to\wrapper.exe\" --cmd \"C:\app.exe arg1 arg2\""
+sc create mysvc binPath= "\"C:\path to\wrapper.exe\" -cmd \"C:\app.exe arg1 arg2\""
 ```
 
 😵‍💫 Yeah. Exactly.
