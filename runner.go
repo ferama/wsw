@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -15,12 +16,13 @@ const (
 	STATUS_STARTED
 )
 
-func newRunner(name string) *runner {
+func newRunner(name string, workingDir string) *runner {
 	r := &runner{
-		Quit: make(chan bool),
-		Name: name,
+		Quit:       make(chan bool),
+		name:       name,
+		workingDir: workingDir,
 	}
-	l := getLogger(r.Name)
+	l := getLogger(r.name)
 	l.Printf("runner created: %s", name)
 	return r
 }
@@ -30,18 +32,19 @@ func newRunner(name string) *runner {
 // runner will watch for process health and restart the application
 // if it fails
 type runner struct {
-	execCmd *exec.Cmd
-	status  int
+	workingDir string
+	execCmd    *exec.Cmd
+	status     int
+	name       string
 
 	mu             sync.Mutex
 	watcherStarted bool
 
 	Quit chan bool
-	Name string
 }
 
 func (r *runner) watcher() {
-	l := getLogger(r.Name)
+	l := getLogger(r.name)
 
 	for {
 		select {
@@ -65,9 +68,21 @@ func (r *runner) watcher() {
 	}
 }
 
-func (r *runner) runCmd(name string, command string, args []string, env []string) (*exec.Cmd, error) {
+func (r *runner) runCmd(name string, exePath string, args []string, env []string) (*exec.Cmd, error) {
 	l := getLogger(name)
-	cmd := exec.Command(command, args...)
+
+	cmd := exec.Command(exePath, args...)
+	if r.workingDir != "" {
+		cmd.Dir = r.workingDir
+	} else {
+		// if no working dir is set, use the executable path
+		// as working dir
+		// this is the default behavior of windows services
+		// and we should keep it
+		// for consistency
+		cmd.Dir = filepath.Dir(exePath)
+	}
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		l.Println(err)
@@ -115,7 +130,7 @@ func (r *runner) Start() {
 		go r.watcher()
 	}
 
-	l := getLogger(r.Name)
+	l := getLogger(r.name)
 	l.Printf("starting... '%s'", wrappedCmdFlag)
 
 	parsed := strings.Fields(wrappedCmdFlag)
@@ -127,7 +142,7 @@ func (r *runner) Start() {
 	cmd := parsed[0]
 	args := parsed[1:]
 	l.Printf("cmd: '%s', args: '%s'", cmd, args)
-	r.execCmd, _ = r.runCmd(r.Name, cmd, args, os.Environ())
+	r.execCmd, _ = r.runCmd(r.name, cmd, args, os.Environ())
 
 	// without this call, the ProcessState is not fullfilled and we
 	// don't have anything to check. Run in a goroutine to take status

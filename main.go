@@ -6,7 +6,7 @@ package main
 // this file is here to allow some kind of developement to occur
 // into the other platforms
 func main() {
-	r := newRunner("wsw")
+	r := newRunner("wsw", "")
 
 	r.Start()
 	<-r.Quit

@@ -52,7 +52,7 @@ func (a *app) Stop() error {
 	return nil
 }
 
-func installService(name string, args string) error {
+func installService(name string, args string, workingDir string) error {
 	m, err := mgr.Connect()
 	if err != nil {
 		return err
@@ -67,7 +67,11 @@ func installService(name string, args string) error {
 	s, err := m.CreateService(name, exepath, mgr.Config{
 		DisplayName: name,
 		StartType:   mgr.StartAutomatic,
-	}, fmt.Sprintf("-%s=\"%s\"", SERVICE_NAME_FLAG, name), fmt.Sprintf("-%s=\"%s\"", CMD_FLAG, args))
+	},
+		fmt.Sprintf("-%s=\"%s\"", SERVICE_NAME_FLAG, name),
+		fmt.Sprintf("-%s=\"%s\"", CMD_FLAG, args),
+		fmt.Sprintf("-%s=\"%s\"", WORKING_DIR_FLAG, workingDir),
+	)
 	if err != nil {
 		return err
 	}
@@ -129,10 +133,11 @@ func main() {
 	}
 	if isWindowsService {
 		serviceName = unwrapQuotes(serviceNameFlag)
+		workingDirFlag = unwrapQuotes(workingDirFlag)
 	}
 
 	if installServiceFlag && wrappedCmdFlag != "" {
-		err := installService(serviceName, wrappedCmdFlag)
+		err := installService(serviceName, wrappedCmdFlag, workingDirFlag)
 		if err != nil {
 			log.Fatalf("Install failed: %v", err)
 		}
@@ -151,7 +156,7 @@ func main() {
 		return
 	}
 
-	runner := newRunner(serviceName)
+	runner := newRunner(serviceName, workingDirFlag)
 	if isWindowsService {
 		wrappedCmdFlag = unwrapQuotes(wrappedCmdFlag)
 		prg := &app{
