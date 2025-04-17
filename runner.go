@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -38,24 +40,24 @@ type runner struct {
 	Name string
 }
 
-func (c *runner) watcher() {
-	l := getLogger(c.Name)
+func (r *runner) watcher() {
+	l := getLogger(r.Name)
 
 	for {
 		select {
-		case <-c.Quit:
-			c.watcherStarted = false
+		case <-r.Quit:
+			r.watcherStarted = false
 			return
 		case <-time.After(5 * time.Second):
 			var status int
-			c.mu.Lock()
-			status = c.status
-			c.mu.Unlock()
+			r.mu.Lock()
+			status = r.status
+			r.mu.Unlock()
 
 			if status == STATUS_STARTED {
-				if !c.healty() {
+				if !r.healty() {
 					l.Println("restarting...")
-					c.Start()
+					r.Start()
 				}
 			}
 
@@ -63,16 +65,57 @@ func (c *runner) watcher() {
 	}
 }
 
-func (c *runner) Start() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (r *runner) runCmd(name string, command string, args []string, env []string) (*exec.Cmd, error) {
+	l := getLogger(name)
+	cmd := exec.Command(command, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		l.Println(err)
+		return nil, err
+	}
+	go r.printStream(name, stdout)
 
-	if !c.watcherStarted {
-		c.watcherStarted = true
-		go c.watcher()
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		l.Println(err)
+		return nil, err
+	}
+	go r.printStream(name, stderr)
+
+	cmd.Env = env
+	// This is NON blocking and do not wait for the command to end
+	cerr := cmd.Start()
+	if cerr != nil {
+		l.Fatal(cerr)
 	}
 
-	l := getLogger(c.Name)
+	return cmd, nil
+}
+
+func (r *runner) printStream(name string, stream io.ReadCloser) {
+	buffer := bufio.NewReader(stream)
+	for {
+		line, err := buffer.ReadString('\n')
+		if len(line) == 0 && err != nil {
+			if err == io.EOF {
+				return
+			}
+		}
+		l := getLogger(name)
+		l.Print(line)
+	}
+}
+
+func (r *runner) Start() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if !r.watcherStarted {
+		r.watcherStarted = true
+		go r.watcher()
+	}
+
+	l := getLogger(r.Name)
 	l.Printf("starting... '%s'", wrappedPathFlag)
 
 	parsed := strings.Fields(wrappedPathFlag)
@@ -84,25 +127,25 @@ func (c *runner) Start() {
 	cmd := parsed[0]
 	args := parsed[1:]
 	l.Printf("cmd: '%s', args: '%s'", cmd, args)
-	c.execCmd, _ = runCmd(c.Name, cmd, args, os.Environ())
+	r.execCmd, _ = r.runCmd(r.Name, cmd, args, os.Environ())
 
 	// without this call, the ProcessState is not fullfilled and we
 	// don't have anything to check. Run in a goroutine to take status
 	// in non blocking way
-	go c.execCmd.Wait()
-	c.status = STATUS_STARTED
+	go r.execCmd.Wait()
+	r.status = STATUS_STARTED
 }
 
-func (c *runner) Stop() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (r *runner) Stop() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	close(c.Quit)
-	if c.execCmd != nil && c.execCmd.Process != nil {
-		c.execCmd.Process.Kill()
-		c.execCmd.Process.Release()
+	close(r.Quit)
+	if r.execCmd != nil && r.execCmd.Process != nil {
+		r.execCmd.Process.Kill()
+		r.execCmd.Process.Release()
 	}
-	c.status = STATUS_STOPPED
+	r.status = STATUS_STOPPED
 }
 
 // reports any health issues
