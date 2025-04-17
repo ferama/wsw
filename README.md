@@ -60,7 +60,7 @@ Stops and removes the service cleanly.
 You can also run it directly without installing as a service:
 
 ```powershell
-wsw.exe --cmd "C:\MyApp\app.exe --arg1 --arg2"
+wsw.exe -cmd "C:\MyApp\app.exe --arg1 --arg2"
 ```
 
 This is how the Windows Service Manager internally starts it — useful for debugging.
