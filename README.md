@@ -4,12 +4,6 @@
 
 ---
 
-# WSW - Windows Service Wrapper
-
-> 💡 A tiny, practical tool that lets **any executable** run as a **real Windows service**, with zero boilerplate.
-
----
-
 ## 🚀 What is WSW?
 
 Running background applications or daemons as Windows services should be easy — but in reality, **Windows makes it tricky**. 
