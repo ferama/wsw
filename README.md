@@ -89,20 +89,6 @@ go build -o wsw.exe .
 
 ---
 
-## 🧩 Why not just use `sc.exe`?
-
-Because quoting in `sc.exe` is a nightmare. For example:
-
-```powershell
-sc create mysvc binPath= "\"C:\path to\wrapper.exe\" -cmd \"C:\app.exe arg1 arg2\""
-```
-
-😵‍💫 Yeah. Exactly.
-
-WSW fixes all of that with clean, declarative arguments. You focus on your app — we’ll handle the rest.
-
----
-
 ## 📦 Use case examples
 
 - Running a Go, Rust, Net, any other runnable app as a service  
