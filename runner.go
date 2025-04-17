@@ -116,9 +116,9 @@ func (r *runner) Start() {
 	}
 
 	l := getLogger(r.Name)
-	l.Printf("starting... '%s'", wrappedPathFlag)
+	l.Printf("starting... '%s'", wrappedCmdFlag)
 
-	parsed := strings.Fields(wrappedPathFlag)
+	parsed := strings.Fields(wrappedCmdFlag)
 
 	if len(parsed) == 0 {
 		l.Fatal("no command found")

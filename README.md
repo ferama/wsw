@@ -1,9 +1,7 @@
 # wsw
 
 ```shell
-# install service
-.\wsw.exe -install-service -path "C:\Users\Administrator\ltest.exe C:\Users\Administrator\ltest.log" -service-name test
+.\wsw.exe -install-service -cmd "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -File C:\log.ps1"
 
-# uninstall service
-.\wsw.exe -uninstall-service -service-name test
+.\wsw.exe -uninstall-service
 ```
