@@ -48,7 +48,7 @@ This will:
 ### 🧹 Uninstall the service:
 
 ```powershell
-wsw.exe -uninstall -service-name myapp
+wsw.exe -uninstall-service -service-name myapp
 ```
 
 Stops and removes the service cleanly.
