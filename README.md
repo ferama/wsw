@@ -32,6 +32,12 @@ If you've ever tried to:
 
 ## 🔧 Usage
 
+### 🛠️ Install
+
+```powershell
+go install github.com/ferama/wsw@latest
+```
+
 ### 🛠️ Install your executable as a Windows service:
 
 ```powershell
