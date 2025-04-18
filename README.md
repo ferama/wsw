@@ -106,16 +106,17 @@ go build -o wsw.exe .
 
 ## 📺 Prevent Windows Defender complaints
 
-Windows Defender or other Antiviruses can wrongly mark `wsw` as a virus. The reason is
-because it make use of low level windows api to setup itself as service and this is considered
-as a malicious behaviour from Windows defender.
+Windows Defender or other antivirus software might incorrectly flag `wsw` as a virus. This is because it uses low-level Windows APIs 
+to install itself as a service, which can be interpreted as malicious behavior by some security tools.
 
 To prevent this you can exlude the directory where `wsw` is installed from Windows Defender
 using a command like this:
 
 ```powershell
-Add-MpPreference -ExclusionPath "C:\wsw"
+Add-MpPreference -ExclusionPath "C:\Path\To\wsw"
 ```
+Replace C:\Path\To\wsw with the actual installation path.
+
 
 ---
 
