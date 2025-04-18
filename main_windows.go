@@ -15,6 +15,8 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 )
 
+const stopTimeout = 10 * time.Second
+
 type app struct {
 	runner *runner
 
@@ -103,12 +105,24 @@ func uninstallService(name string) error {
 	// Try stopping the service if running
 	status, err := s.Query()
 	if err == nil && status.State == wsvc.Running {
+		log.Printf("Stopping service %q...\n", name)
 		_, err = s.Control(wsvc.Stop)
 		if err != nil {
 			log.Printf("Warning: could not stop service %q: %v\n", name, err)
 		} else {
-			log.Printf("Stopping service %q...\n", name)
-			time.Sleep(2 * time.Second) // Give it time to shut down
+			// Poll until it's stopped or timeout
+			deadline := time.Now().Add(stopTimeout)
+			for time.Now().Before(deadline) {
+				status, err = s.Query()
+				if err != nil {
+					break
+				}
+				if status.State != wsvc.Stopped {
+					time.Sleep(500 * time.Millisecond)
+				} else {
+					break
+				}
+			}
 		}
 	}
 
