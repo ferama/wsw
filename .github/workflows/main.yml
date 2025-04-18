@@ -27,10 +27,9 @@ jobs:
       # Runs a set of commands using the runners shell
       - name: Build the binary
         run: |
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -tags service_man -o wsw.exe
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o wsw-nsm.exe
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w"
 
       - uses: ncipollo/release-action@v1
         with:
-          artifacts: "*.exe"
+          artifacts: "wsw.exe"
           token: ${{ secrets.GITHUB_TOKEN }}
