@@ -41,7 +41,7 @@ go install github.com/ferama/wsw@latest
 ### 🛠️ Install your executable as a Windows service:
 
 ```powershell
-wsw.exe -install-service -service-name myapp -cmd "C:\MyApp\app.exe --arg1 --arg2"
+wsw.exe -i -name myapp -cmd "C:\MyApp\app.exe --arg1 --arg2"
 ```
 
 This will:
@@ -54,7 +54,7 @@ This will:
 ### 🧹 Uninstall the service:
 
 ```powershell
-wsw.exe -uninstall-service -service-name myapp
+wsw.exe -u -name myapp
 ```
 
 Stops and removes the service cleanly.
