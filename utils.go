@@ -33,7 +33,7 @@ func getLogger(name string) *log.Logger {
 	fileName := filepath.Join(getRunnerDir(), fmt.Sprintf("%s.log", name))
 	jack := &lumberjack.Logger{
 		Filename:   fileName,
-		MaxSize:    1,
+		MaxSize:    25, // megabytes
 		MaxBackups: 2,
 		MaxAge:     7,
 	}
