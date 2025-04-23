@@ -1,17 +1,18 @@
 use clap::Parser;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use tracing::{error, info};
 
 use windows_service::define_windows_service;
 use windows_service::service_dispatcher;
 
 mod cli;
-mod manager;
+mod logs;
 mod runner;
 mod service;
 
 use cli::*;
-use manager::*;
+use logs::*;
 use runner::runner;
 use service::*;
 
@@ -21,29 +22,36 @@ fn main() {
     let cli = Cli::parse();
     // If parsing fails, clap will print the error and exit
     match cli.command {
-        Some(Commands::Install { cmd }) => {
+        Some(Commands::Install { cmd, name }) => {
+            let _guard = setup_logging(name.as_str());
+
             if let Some(cmd) = cmd {
-                install_service(SERVICE_NAME, cmd);
+                install_service(&name, cmd);
             } else {
-                eprintln!("--cmd is required with install");
+                error!("--cmd is required with install");
             }
         }
-        Some(Commands::Uninstall) => {
-            let res = uninstall_service(SERVICE_NAME);
+        Some(Commands::Uninstall { name }) => {
+            let _guard = setup_logging(name.as_str());
+
+            let res = uninstall_service(&name);
             if res.is_ok() {
-                println!("Service uninstalled successfully.");
+                info!("Service uninstalled successfully.");
             } else {
-                eprintln!("Failed to uninstall service: {}", res.unwrap_err());
+                error!("Failed to uninstall service: {}", res.unwrap_err());
             }
         }
-        Some(Commands::Run { cmd }) => {
-            if let Err(e) = service_dispatcher::start(SERVICE_NAME, ffi_service_main) {
-                eprintln!("Failed to start service: {}", e);
+        Some(Commands::Run { cmd, name }) => {
+            let _guard = setup_logging(name.as_str());
+            info!("=========== Running in foreground mode.");
+
+            if let Err(e) = service_dispatcher::start(name, ffi_service_main) {
+                error!("Failed to start service: {}", e);
                 let watcher = Arc::new(AtomicBool::new(true));
                 if let Some(cmd) = cmd {
                     runner(cmd, watcher);
                 } else {
-                    eprintln!("--cmd is required with run");
+                    error!("--cmd is required with run");
                 }
             }
         }
