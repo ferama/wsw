@@ -1,7 +1,7 @@
+use clap::Parser;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use clap::Parser;
 use windows_service::define_windows_service;
 use windows_service::service_dispatcher;
 
@@ -39,12 +39,12 @@ fn main() {
         Some(Commands::Run { cmd }) => {
             if let Err(e) = service_dispatcher::start(SERVICE_NAME, ffi_service_main) {
                 eprintln!("Failed to start service: {}", e);
-            }
-            let watcher = Arc::new(AtomicBool::new(true));
-            if let Some(cmd) = cmd {
-                runner(cmd, watcher);
-            } else {
-                eprintln!("--cmd is required with run");
+                let watcher = Arc::new(AtomicBool::new(true));
+                if let Some(cmd) = cmd {
+                    runner(cmd, watcher);
+                } else {
+                    eprintln!("--cmd is required with run");
+                }
             }
         }
         None => {

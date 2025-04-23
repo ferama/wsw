@@ -1,11 +1,10 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, command};
 
 #[derive(Parser)]
 #[command(
     name = "WSW",
     about = "Tiny tool to wrap any executable into a Windows service",
-    version,
-    author
+    version
 )]
 pub struct Cli {
     #[command(subcommand)]
