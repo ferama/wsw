@@ -1,13 +1,14 @@
 use clap::Parser;
 use std::{
+    process::Child,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     thread,
     time::Duration,
 };
-use tracing::info;
+use tracing::{error, info};
 use windows_service::{
     service::{
         ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
@@ -23,7 +24,7 @@ use std::ffi::OsString;
 
 use crate::{
     cli::{Cli, Commands},
-    runner::runner,
+    runner::run_command,
 };
 
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
@@ -50,7 +51,6 @@ pub fn service_main(_args: Vec<OsString>) {
 
     let running = Arc::new(AtomicBool::new(true));
     let stop_flag = running.clone();
-    let watcher = running.clone();
 
     // TODO: get service name from args
     let event_handler =
@@ -75,13 +75,48 @@ pub fn service_main(_args: Vec<OsString>) {
         })
         .unwrap();
 
-    thread::spawn(move || {
-        runner(cmd_arg, watcher);
-    });
+    let g_child: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
+    let g_child_bg = Arc::clone(&g_child);
 
+    thread::spawn(move || {
+        loop {
+            if let Ok(child) = run_command(&cmd_arg) {
+                info!("Child process started with PID: {}", child.id());
+
+                {
+                    let mut lock = g_child_bg.lock().unwrap();
+                    *lock = Some(child);
+                }
+
+                let maybe_child = g_child_bg.lock().unwrap().take();
+
+                if let Some(mut child) = maybe_child {
+                    if let Err(e) = child.wait() {
+                        error!("Failed to wait for child process: {}", e);
+                    }
+                }
+
+                // {
+                //     let mut lock = g_child_bg.lock().unwrap();
+                //     *lock = None;
+                // }
+
+                error!("Child process exited. Restarting...");
+                thread::sleep(Duration::from_secs(1));
+            }
+        }
+    });
     // Main loop
     while running.load(Ordering::SeqCst) {
         thread::sleep(Duration::from_secs(1));
+    }
+    // TODO: process does not exit when service is stopped
+
+    let mut g_child = g_child.lock().unwrap();
+    info!("=== child: {:?}", g_child);
+    if let Some(mut child) = g_child.take() {
+        info!("Stopping child process with PID: {}", child.id());
+        child.kill().expect("Failed to kill child process");
     }
     // Update status before exiting
     event_handler

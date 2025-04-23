@@ -1,6 +1,5 @@
 use clap::Parser;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use runner::run_command;
 use tracing::{error, info};
 
 use windows_service::define_windows_service;
@@ -13,7 +12,6 @@ mod service;
 
 use cli::*;
 use logs::*;
-use runner::runner;
 use service::*;
 
 fn main() {
@@ -47,9 +45,12 @@ fn main() {
 
             if let Err(e) = service_dispatcher::start(name, ffi_service_main) {
                 error!("Failed to start service: {}", e);
-                let watcher = Arc::new(AtomicBool::new(true));
                 if let Some(cmd) = cmd {
-                    runner(cmd, watcher);
+                    if let Ok(mut child) = run_command(&cmd) {
+                        if let Err(e) = child.wait() {
+                            error!("Failed to wait for child process: {}", e);
+                        }
+                    }
                 } else {
                     error!("--cmd is required with run");
                 }
