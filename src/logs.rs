@@ -66,8 +66,10 @@ impl Write for LogWriter {
         match std::str::from_utf8(buf) {
             Ok(s) => {
                 // Optionally trim trailing newlines or chunk it better
-                // info!(target: "LogWriter", "{}", s);
                 for line in s.lines() {
+                    if line.is_empty() {
+                        continue;
+                    }
                     info!("{}", line);
                 }
             }

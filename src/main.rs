@@ -46,8 +46,8 @@ fn main() {
 
             define_windows_service!(ffi_service_main, service_main);
 
-            if let Err(e) = service_dispatcher::start(name, ffi_service_main) {
-                error!("Failed to start service: {}", e);
+            if let Err(_e) = service_dispatcher::start(name, ffi_service_main) {
+                // error!("Failed to start service: {}", e);
                 if let Some(cmd) = cmd {
                     if let Ok(mut child) = run_command(&cmd) {
                         if let Err(e) = child.wait() {
@@ -60,7 +60,8 @@ fn main() {
             }
         }
         None => {
-            eprintln!("{}", Cli::command().render_long_help());
+            let help = Cli::command().render_help();
+            println!("{}", help.ansi());
             std::process::exit(1);
         }
     }
