@@ -20,6 +20,52 @@ use std::ffi::OsString;
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 pub const SERVICE_NAME: &str = "WSW";
 
+pub fn runner(cmd: String, watcher: Arc<AtomicBool>) {
+    let mut parts = cmd.split_whitespace();
+    if let Some(exe) = parts.next() {
+        let exe_args: Vec<&str> = parts.collect();
+        loop {
+            println!("Starting child process: {}", exe);
+            match Command::new(exe)
+                .args(&exe_args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(child) => {
+                    let child = Arc::new(Mutex::new(child));
+                    let child_clone = Arc::clone(&child);
+                    let watcher_clone = Arc::clone(&watcher);
+                    let watcher_thread = thread::spawn(move || {
+                        loop {
+                            if !watcher_clone.load(Ordering::SeqCst) {
+                                let mut child = child_clone.lock().unwrap();
+                                let _ = child.kill().map_err(|e| {
+                                    eprintln!("Failed to kill child process: {}", e);
+                                });
+                                break;
+                            }
+                            thread::sleep(Duration::from_secs(1));
+                        }
+                    });
+                    let mut child = child.lock().unwrap();
+                    if let Err(e) = child.wait() {
+                        eprintln!("Failed to wait for child process: {}", e);
+                    }
+                    watcher_thread.join().unwrap();
+                    eprintln!("Child process exited. Restarting...");
+                    thread::sleep(Duration::from_secs(2));
+                }
+                Err(e) => {
+                    eprintln!("Failed to start child process: {}", e);
+                    thread::sleep(Duration::from_secs(5));
+                }
+            }
+        }
+    }
+}
+
 pub fn service_main(args: Vec<OsString>) {
     let running = Arc::new(AtomicBool::new(true));
     let stop_flag = running.clone();
@@ -54,51 +100,9 @@ pub fn service_main(args: Vec<OsString>) {
     if let Some(pos) = args.iter().position(|a| a == "--cmd") {
         if args.len() > pos + 1 {
             let full_cmd = args[pos + 1].clone();
-
             // Spawn a thread to run the child process
             thread::spawn(move || {
-                let mut parts = full_cmd.split_whitespace();
-                if let Some(exe) = parts.next() {
-                    let exe_args: Vec<&str> = parts.collect();
-                    loop {
-                        match Command::new(exe)
-                            .args(&exe_args)
-                            .stdin(Stdio::null())
-                            .stdout(Stdio::null())
-                            .stderr(Stdio::null())
-                            .spawn()
-                        {
-                            Ok(child) => {
-                                let child = Arc::new(Mutex::new(child));
-                                let child_clone = Arc::clone(&child);
-                                let watcher_clone = Arc::clone(&watcher);
-                                let watcher_thread = thread::spawn(move || {
-                                    loop {
-                                        if !watcher_clone.load(Ordering::SeqCst) {
-                                            let mut child = child_clone.lock().unwrap();
-                                            let _ = child.kill().map_err(|e| {
-                                                eprintln!("Failed to kill child process: {}", e);
-                                            });
-                                            break;
-                                        }
-                                        thread::sleep(Duration::from_secs(1));
-                                    }
-                                });
-                                let mut child = child.lock().unwrap();
-                                if let Err(e) = child.wait() {
-                                    eprintln!("Failed to wait for child process: {}", e);
-                                }
-                                watcher_thread.join().unwrap();
-                                eprintln!("Child process exited. Restarting...");
-                                thread::sleep(Duration::from_secs(2));
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to start child process: {}", e);
-                                thread::sleep(Duration::from_secs(5));
-                            }
-                        }
-                    }
-                }
+                runner(full_cmd, watcher);
             });
         }
     }
