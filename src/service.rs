@@ -27,7 +27,15 @@ use crate::{
 };
 
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
-pub const SERVICE_NAME_PREFIX: &str = "WSW";
+pub const SERVICE_NAME_PREFIX: &str = "wsw";
+
+pub fn get_service_name(name: &str) -> String {
+    if name == SERVICE_NAME_PREFIX {
+        SERVICE_NAME_PREFIX.to_string()
+    } else {
+        format!("{}-{}", SERVICE_NAME_PREFIX, name)
+    }
+}
 
 pub fn service_main(_args: Vec<OsString>) {
     let cli = Cli::parse();
@@ -37,7 +45,7 @@ pub fn service_main(_args: Vec<OsString>) {
         Some(Commands::Run { cmd, name }) => {
             if let Some(cmd) = cmd {
                 cmd_arg = cmd.clone();
-                svc_name_arg = name.clone();
+                svc_name_arg = get_service_name(name.as_str());
             } else {
                 panic!("--cmd is required with run");
             }
@@ -50,7 +58,6 @@ pub fn service_main(_args: Vec<OsString>) {
     let running = Arc::new(AtomicBool::new(true));
     let stop_flag = running.clone();
 
-    // TODO: get service name from args
     let event_handler =
         service_control_handler::register(svc_name_arg, move |control_event| match control_event {
             ServiceControl::Stop => {
@@ -128,12 +135,6 @@ pub fn install_service(name: &str, service_cmd: String) {
         .expect("Failed to connect to service manager");
 
     let executable_path = ::std::env::current_exe().unwrap();
-    let cmd_line = format!(
-        "\"{} run --cmd {}\"",
-        executable_path.display(),
-        service_cmd
-    );
-    info!("CmdLine: '{}'", cmd_line);
 
     let service_info = ServiceInfo {
         name: OsString::from(name),
@@ -146,6 +147,8 @@ pub fn install_service(name: &str, service_cmd: String) {
             OsString::from("run"),
             OsString::from("--cmd"),
             OsString::from(service_cmd),
+            OsString::from("--name"),
+            OsString::from(name),
         ],
         dependencies: vec![],
         account_name: None,
@@ -159,7 +162,6 @@ pub fn install_service(name: &str, service_cmd: String) {
     service
         .start::<std::ffi::OsString>(&[])
         .expect("Failed to start service");
-    info!("Service installed and started successfully");
 }
 
 pub fn uninstall_service(name: &str) -> windows_service::Result<()> {
@@ -189,7 +191,7 @@ pub fn uninstall_service(name: &str) -> windows_service::Result<()> {
                 break;
             }
             if start.elapsed() > timeout {
-                eprintln!("Timeout waiting for service to stop");
+                error!("Timeout waiting for service to stop");
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -198,6 +200,5 @@ pub fn uninstall_service(name: &str) -> windows_service::Result<()> {
 
     // Now delete it
     service.delete()?;
-    info!("Service '{}' uninstalled successfully.", name);
     Ok(())
 }

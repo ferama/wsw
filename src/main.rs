@@ -19,27 +19,29 @@ fn main() {
     // If parsing fails, clap will print the error and exit
     match cli.command {
         Some(Commands::Install { cmd, name }) => {
-            let _guard = setup_logging(name.as_str());
+            let svc_name = get_service_name(&name);
+            let _guard = setup_logging(&svc_name);
 
             if let Some(cmd) = cmd {
-                install_service(&name, cmd);
+                install_service(&svc_name, cmd);
+                info!("Service '{}' installed successfully.", svc_name);
             } else {
                 error!("--cmd is required with install");
             }
         }
         Some(Commands::Uninstall { name }) => {
-            let _guard = setup_logging(name.as_str());
+            let svc_name = get_service_name(&name);
+            let _guard = setup_logging(&svc_name);
 
-            let res = uninstall_service(&name);
+            let res = uninstall_service(&svc_name);
             if res.is_ok() {
-                info!("Service uninstalled successfully.");
+                info!("Service '{}' uninstalled successfully.", svc_name);
             } else {
                 error!("Failed to uninstall service: {}", res.unwrap_err());
             }
         }
         Some(Commands::Run { cmd, name }) => {
-            let _guard = setup_logging(name.as_str());
-            info!("= Starting service =");
+            let _guard = setup_logging(&name);
 
             define_windows_service!(ffi_service_main, service_main);
 
@@ -55,7 +57,6 @@ fn main() {
                     error!("--cmd is required with run");
                 }
             }
-            info!("= Service stopped =");
         }
         None => {
             eprintln!("No command provided. Use --help to see usage.");
