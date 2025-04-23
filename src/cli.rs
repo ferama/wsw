@@ -16,6 +16,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Install and start the Windows service
+    #[command(visible_alias = "i")]
     Install {
         /// Path and args for the executable to run as a service
         #[arg(long)]
@@ -25,6 +26,7 @@ pub enum Commands {
         name: String,
     },
     /// Stop and uninstall the Windows service
+    #[command(visible_alias = "u")]
     Uninstall {
         /// Name of the service to uninstall
         #[arg(long, default_value_t = String::from(SERVICE_NAME_PREFIX))]
