@@ -1,3 +1,4 @@
+use clap::CommandFactory;
 use clap::Parser;
 use runner::run_command;
 use tracing::{error, info};
@@ -59,7 +60,8 @@ fn main() {
             }
         }
         None => {
-            eprintln!("No command provided. Use --help to see usage.");
+            eprintln!("{}", Cli::command().render_long_help());
+            std::process::exit(1);
         }
     }
 }
