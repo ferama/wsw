@@ -16,8 +16,6 @@ use logs::*;
 use runner::runner;
 use service::*;
 
-define_windows_service!(ffi_service_main, service_main);
-
 fn main() {
     let cli = Cli::parse();
     // If parsing fails, clap will print the error and exit
@@ -43,7 +41,9 @@ fn main() {
         }
         Some(Commands::Run { cmd, name }) => {
             let _guard = setup_logging(name.as_str());
-            info!("=========== Running in foreground mode.");
+            info!("= Starting service =");
+
+            define_windows_service!(ffi_service_main, service_main);
 
             if let Err(e) = service_dispatcher::start(name, ffi_service_main) {
                 error!("Failed to start service: {}", e);
@@ -54,6 +54,7 @@ fn main() {
                     error!("--cmd is required with run");
                 }
             }
+            info!("= Service stopped =");
         }
         None => {
             eprintln!("No command provided. Use --help to see usage.");

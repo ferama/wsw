@@ -1,3 +1,4 @@
+use clap::Parser;
 use std::{
     sync::{
         Arc,
@@ -20,26 +21,45 @@ use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
 use std::ffi::OsString;
 
-use crate::runner::runner;
+use crate::{
+    cli::{Cli, Commands},
+    runner::runner,
+};
 
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 pub const SERVICE_NAME_PREFIX: &str = "WSW";
 
-pub fn service_main(args: Vec<OsString>) {
+pub fn service_main(_args: Vec<OsString>) {
+    let cli = Cli::parse();
+    let cmd_arg;
+    let svc_name_arg;
+    match cli.command {
+        Some(Commands::Run { cmd, name }) => {
+            if let Some(cmd) = cmd {
+                cmd_arg = cmd.clone();
+                svc_name_arg = name.clone();
+                info!("#### within service_main(): '{:?}', '{:?}'", cmd, name);
+            } else {
+                panic!("--cmd is required with run");
+            }
+        }
+        _ => {
+            panic!("Service main called without --cmd argument");
+        }
+    }
+
     let running = Arc::new(AtomicBool::new(true));
     let stop_flag = running.clone();
     let watcher = running.clone();
 
     // TODO: get service name from args
     let event_handler =
-        service_control_handler::register(SERVICE_NAME_PREFIX, move |control_event| {
-            match control_event {
-                ServiceControl::Stop => {
-                    stop_flag.store(false, Ordering::SeqCst);
-                    ServiceControlHandlerResult::NoError
-                }
-                _ => ServiceControlHandlerResult::NotImplemented,
+        service_control_handler::register(svc_name_arg, move |control_event| match control_event {
+            ServiceControl::Stop => {
+                stop_flag.store(false, Ordering::SeqCst);
+                ServiceControlHandlerResult::NoError
             }
+            _ => ServiceControlHandlerResult::NotImplemented,
         })
         .unwrap();
 
@@ -55,19 +75,9 @@ pub fn service_main(args: Vec<OsString>) {
         })
         .unwrap();
 
-    let args = args
-        .into_iter()
-        .map(|s| s.to_string_lossy().into_owned())
-        .collect::<Vec<String>>();
-    if let Some(pos) = args.iter().position(|a| a == "--cmd") {
-        if args.len() > pos + 1 {
-            let full_cmd = args[pos + 1].clone();
-            // Spawn a thread to run the child process
-            thread::spawn(move || {
-                runner(full_cmd, watcher);
-            });
-        }
-    }
+    thread::spawn(move || {
+        runner(cmd_arg, watcher);
+    });
 
     // Main loop
     while running.load(Ordering::SeqCst) {
@@ -93,8 +103,12 @@ pub fn install_service(name: &str, service_cmd: String) {
         .expect("Failed to connect to service manager");
 
     let executable_path = ::std::env::current_exe().unwrap();
-    info!("Executable path: {}", executable_path.display());
-    info!("Run CMD: {}", service_cmd);
+    let cmd_line = format!(
+        "\"{} run --cmd {}\"",
+        executable_path.display(),
+        service_cmd
+    );
+    info!("CmdLine: '{}'", cmd_line);
 
     let service_info = ServiceInfo {
         name: OsString::from(name),
@@ -102,7 +116,7 @@ pub fn install_service(name: &str, service_cmd: String) {
         service_type: ServiceType::OWN_PROCESS,
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
-        executable_path: executable_path.clone(),
+        executable_path: executable_path.into(),
         launch_arguments: vec![
             OsString::from("run"),
             OsString::from("--cmd"),
