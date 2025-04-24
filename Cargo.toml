@@ -13,3 +13,10 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 which = "7.0.3"
 windows = { version = "0.61", features = ["Win32_System_Services"] }
 windows-service = "0.8.0"
+
+[profile.release]
+opt-level = 2
+lto = true            # Link Time Optimization
+codegen-units = 1     # Single codegen unit (smaller but slower compile)
+panic = "abort"       # Remove unwinding code (if you don't need backtraces)
+strip = true          # Strip symbols

@@ -1,4 +1,5 @@
 use chrono::Local;
+// use chrono::Local;
 use tracing_appender::non_blocking::WorkerGuard;
 
 use std::env;
@@ -32,7 +33,6 @@ pub fn setup_logging(name: &str) -> WorkerGuard {
             PathBuf::from("logs")
         }
     };
-    // let file_appender = rolling::daily("logs", name);
     let file_appender = rolling::daily(log_path, name);
     let (non_blocking_file, guard) = tracing_appender::non_blocking(file_appender); // Set up logging here if needed
 
