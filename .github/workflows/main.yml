@@ -25,6 +25,12 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release --target x86_64-pc-windows-msvc
+      
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: wsw-binary
+          path: target/x86_64-pc-windows-msvc/release/wsw.exe
 
       - name: Upload binary to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
