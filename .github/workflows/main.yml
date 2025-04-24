@@ -19,11 +19,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Rust (MSVC)
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           target: x86_64-pc-windows-msvc
-          override: true
 
       - name: Build release binary
         run: cargo build --release --target x86_64-pc-windows-msvc
