@@ -1,2 +1,2 @@
-wsw
-*.exe
+/target
+/logs

@@ -2,7 +2,6 @@
 
 > 💡 A tiny, practical tool that lets **any executable or script** run as a **real Windows service**, with zero boilerplate.
 
----
 
 ## 🚀 What is WSW?
 
@@ -17,7 +16,6 @@ If you've ever tried to:
 
 **Then WSW is for you.**
 
----
 
 ## ✅ Features
 
@@ -28,20 +26,22 @@ If you've ever tried to:
 - 📜 Logs every restart attempt and failure  
 - 💼 Built with **pure Go**, no unsafe code  
 
----
 
 ## 🔧 Usage
 
 ### 🛠️ Install
 
 ```powershell
-go install github.com/ferama/wsw@latest
+# using cargo
+cargo install --git https://github.com/ferama/wsw
 ```
+
+or download a prebuilt binary from github release page
 
 ### 🛠️ Install your executable as a Windows service:
 
 ```powershell
-wsw.exe -i -name myapp -cmd "C:\MyApp\app.exe --arg1 --arg2"
+wsw.exe install --name myapp --cmd "C:\MyApp\app.exe --arg1 --arg2"
 ```
 
 This will:
@@ -49,29 +49,24 @@ This will:
 - Configure it to launch `app.exe --arg1 --arg2`  
 - Automatically start it  
 
----
 
 ### 🧹 Uninstall the service:
 
 ```powershell
-wsw.exe -u -name myapp
+wsw.exe uninstall --name myapp
 ```
 
 Stops and removes the service cleanly.
-
----
 
 ### 🧪 Run manually (for testing):
 
 You can also run it directly without installing as a service:
 
 ```powershell
-wsw.exe -cmd "C:\MyApp\app.exe --arg1 --arg2"
+wsw.exe run --cmd "C:\MyApp\app.exe --arg1 --arg2"
 ```
 
 This is how the Windows Service Manager internally starts it — useful for debugging.
-
----
 
 ## 🔍 How it works
 
@@ -83,26 +78,12 @@ This makes your app:
 - Resilient to crashes  
 - Easy to deploy  
 
----
-
-## 🛠️ Build it yourself
-
-Requires Go 1.18+
-
-```bash
-go build -o wsw.exe .
-```
-
----
-
 ## 📦 Use case examples
 
 - Running a Go, Rust, Net, any other runnable app as a service  
 - Auto-starting a CLI tool with logging on boot  
 - Running off-the-shelf tools like Python or Powershell scripts in the background  
 - Easy service wrapping in CI setups or cloud VMs  
-
----
 
 ## 📺 Prevent Windows Defender complaints
 
@@ -117,14 +98,9 @@ Add-MpPreference -ExclusionPath "C:\Path\To\wsw"
 ```
 Replace C:\Path\To\wsw with the actual installation path.
 
-
----
-
 ## 📄 License
 
 MIT
-
----
 
 ## ❤️ Contribute
 
