@@ -24,7 +24,7 @@ If you've ever tried to:
 - 💥 **Automatic restart** if the wrapped process crashes  
 - 🧼 **Clean install/uninstall** without needing `sc.exe`  
 - 📜 Logs every restart attempt and failure  
-- 💼 Built with **pure Go**, no unsafe code  
+- 💼 Built with **pure Rust** 
 
 
 ## 🔧 Usage
