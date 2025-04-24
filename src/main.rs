@@ -3,6 +3,7 @@ use clap::Parser;
 use runner::run_command;
 use tracing::{error, info};
 
+use prettytable::{Table, row};
 use windows_service::define_windows_service;
 use windows_service::service_dispatcher;
 
@@ -19,6 +20,21 @@ fn main() {
     let cli = Cli::parse();
     // If parsing fails, clap will print the error and exit
     match cli.command {
+        Some(Commands::List) => {
+            let services = list_services_with_status();
+            if services.is_empty() {
+                println!("No services found.");
+            } else {
+                let mut table = Table::new();
+                table.add_row(row!["Service Name", "Status"]);
+
+                for service in services {
+                    table.add_row(row![service.0, service.1]);
+                }
+
+                table.printstd();
+            }
+        }
         Some(Commands::Install { cmd, name }) => {
             let svc_name = get_service_name(&name);
             let _guard = setup_logging(&svc_name);
@@ -38,7 +54,11 @@ fn main() {
             if res.is_ok() {
                 info!("Service '{}' uninstalled successfully.", svc_name);
             } else {
-                error!("Failed to uninstall service: {}", res.unwrap_err());
+                error!(
+                    "Failed to uninstall service '{}': {}",
+                    name,
+                    res.unwrap_err()
+                );
             }
         }
         Some(Commands::Run { cmd, name }) => {
@@ -47,7 +67,6 @@ fn main() {
             define_windows_service!(ffi_service_main, service_main);
 
             if let Err(_e) = service_dispatcher::start(name, ffi_service_main) {
-                // error!("Failed to start service: {}", e);
                 if let Some(cmd) = cmd {
                     if let Ok(mut child) = run_command(&cmd) {
                         if let Err(e) = child.wait() {

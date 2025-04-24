@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 use tracing::{error, info};
+use windows::{Win32::System::Services::*, core::PWSTR};
 use windows_service::{
     service::{
         ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
@@ -92,7 +93,7 @@ pub fn service_main(_args: Vec<OsString>) {
                 let exited = {
                     match child.try_wait() {
                         Ok(Some(status)) => {
-                            info!("Child exited with status: {}", status);
+                            error!("Child exited with status: {}", status);
                             true
                         }
                         Ok(None) => false,
@@ -108,9 +109,6 @@ pub fn service_main(_args: Vec<OsString>) {
             }
 
             let _ = child.kill();
-            info!("Killed child");
-
-            error!("Child process exited. Restarting...");
             thread::sleep(Duration::from_secs(1));
         }
     }
@@ -139,7 +137,7 @@ pub fn install_service(name: &str, service_cmd: String) {
     let service_info = ServiceInfo {
         name: OsString::from(name),
         display_name: OsString::from("Windows Service Wrapper"),
-        service_type: ServiceType::OWN_PROCESS,
+        service_type: SERVICE_TYPE,
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
         executable_path: executable_path.into(),
@@ -201,4 +199,94 @@ pub fn uninstall_service(name: &str) -> windows_service::Result<()> {
     // Now delete it
     service.delete()?;
     Ok(())
+}
+
+pub fn list_services_with_status() -> Vec<(String, String)> {
+    let mut service_list = Vec::new();
+
+    unsafe {
+        let scm_handle_res = OpenSCManagerW(None, None, SC_MANAGER_ENUMERATE_SERVICE);
+        if scm_handle_res.is_err() {
+            error!(
+                "Failed to open service control manager: {:?}",
+                scm_handle_res.err()
+            );
+            return service_list;
+        }
+        let scm_handle = scm_handle_res.unwrap();
+        if scm_handle.0.is_null() {
+            panic!("Failed to open service control manager");
+        }
+
+        let mut bytes_needed = 0u32;
+        let mut services_returned = 0u32;
+        let mut resume_handle: u32 = 0;
+
+        // First call to get buffer size
+        let _ = EnumServicesStatusExW(
+            scm_handle,
+            SC_ENUM_PROCESS_INFO,
+            SERVICE_WIN32,
+            SERVICE_STATE_ALL,
+            None,
+            &mut bytes_needed,
+            &mut services_returned,
+            Some(&mut resume_handle),
+            None,
+        );
+
+        let mut buffer: Vec<u8> = vec![0; bytes_needed as usize];
+
+        let _ = EnumServicesStatusExW(
+            scm_handle,
+            SC_ENUM_PROCESS_INFO,
+            SERVICE_WIN32,
+            SERVICE_STATE_ALL,
+            Some(&mut buffer),
+            &mut bytes_needed,
+            &mut services_returned,
+            Some(&mut resume_handle),
+            None,
+        );
+
+        let services = std::slice::from_raw_parts(
+            buffer.as_ptr() as *const ENUM_SERVICE_STATUS_PROCESSW,
+            services_returned as usize,
+        );
+
+        for svc in services {
+            let name = widestring_to_string(svc.lpServiceName);
+            // info!("Service Name: {}", name);
+            if name.starts_with(SERVICE_NAME_PREFIX) {
+                let status = match svc.ServiceStatusProcess.dwCurrentState {
+                    SERVICE_RUNNING => "Running".to_string(),
+                    SERVICE_STOPPED => "Stopped".to_string(),
+                    SERVICE_START_PENDING => "Start Pending".to_string(),
+                    SERVICE_STOP_PENDING => "Stop Pending".to_string(),
+                    SERVICE_CONTINUE_PENDING => "Continue Pending".to_string(),
+                    SERVICE_PAUSE_PENDING => "Pause Pending".to_string(),
+                    SERVICE_PAUSED => "Paused".to_string(),
+                    _ => "Unknown".to_string(),
+                };
+                service_list.push((name, status));
+            }
+        }
+
+        let _ = CloseServiceHandle(scm_handle);
+    }
+    return service_list;
+}
+
+fn widestring_to_string(ptr: PWSTR) -> String {
+    unsafe {
+        if ptr.0.is_null() {
+            return String::new();
+        }
+        let mut len = 0;
+        while *ptr.0.offset(len) != 0 {
+            len += 1;
+        }
+        let slice = std::slice::from_raw_parts(ptr.0, len as usize);
+        String::from_utf16_lossy(slice)
+    }
 }

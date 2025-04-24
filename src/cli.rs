@@ -15,6 +15,8 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    #[command(visible_alias = "ls")]
+    List,
     /// Install and start the Windows service
     #[command(visible_alias = "i")]
     Install {

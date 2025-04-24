@@ -46,7 +46,8 @@ pub fn setup_logging(name: &str) -> WorkerGuard {
     let file_layer = fmt::layer()
         .with_writer(non_blocking_file)
         .with_target(false)
-        .with_timer(LocalTimer);
+        .with_timer(LocalTimer)
+        .with_ansi(false); // Disable ANSI escape codes
 
     // Set up subscriber with both layers
     let subscriber = Registry::default()
