@@ -35,13 +35,16 @@ If you've ever tried to:
 ### 🛠️ Install
 
 ```powershell
-go install github.com/ferama/wsw@latest
+# using cargo
+cargo install --git https://github.com/ferama/wsw
 ```
+
+or download a prebuilt binary from github release page
 
 ### 🛠️ Install your executable as a Windows service:
 
 ```powershell
-wsw.exe -i -name myapp -cmd "C:\MyApp\app.exe --arg1 --arg2"
+wsw.exe install --name myapp --cmd "C:\MyApp\app.exe --arg1 --arg2"
 ```
 
 This will:
@@ -54,7 +57,7 @@ This will:
 ### 🧹 Uninstall the service:
 
 ```powershell
-wsw.exe -u -name myapp
+wsw.exe uninstall --name myapp
 ```
 
 Stops and removes the service cleanly.
@@ -66,7 +69,7 @@ Stops and removes the service cleanly.
 You can also run it directly without installing as a service:
 
 ```powershell
-wsw.exe -cmd "C:\MyApp\app.exe --arg1 --arg2"
+wsw.exe run --cmd "C:\MyApp\app.exe --arg1 --arg2"
 ```
 
 This is how the Windows Service Manager internally starts it — useful for debugging.
@@ -82,16 +85,6 @@ This makes your app:
 - Service-friendly  
 - Resilient to crashes  
 - Easy to deploy  
-
----
-
-## 🛠️ Build it yourself
-
-Requires Go 1.18+
-
-```bash
-go build -o wsw.exe .
-```
 
 ---
 
