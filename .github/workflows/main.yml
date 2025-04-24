@@ -11,8 +11,7 @@ jobs:
   # This workflow contains a single job called "build"
   build:
     # The type of runner that the job will run on
-    runs-on: ubuntu-latest
-    # runs-on: self-hosted
+    runs-on: windows-latest
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
@@ -27,7 +26,7 @@ jobs:
       # Runs a set of commands using the runners shell
       - name: Build the binary
         run: |
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w"
+          go build -trimpath -ldflags="-s -w" -o wsw.exe
 
       - uses: ncipollo/release-action@v1
         with:
