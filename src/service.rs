@@ -42,14 +42,16 @@ pub fn service_main(_args: Vec<OsString>) {
     let cli = Cli::parse();
     let cmd_arg;
     let svc_name_arg;
+    let working_dir_arg: Option<String>;
     match cli.command {
-        Some(Commands::Run { cmd, name }) => {
-            if let Some(cmd) = cmd {
-                cmd_arg = cmd.clone();
-                svc_name_arg = get_service_name(name.as_str());
-            } else {
-                panic!("--cmd is required with run");
-            }
+        Some(Commands::Run {
+            cmd,
+            working_dir,
+            name,
+        }) => {
+            cmd_arg = cmd.clone();
+            svc_name_arg = get_service_name(name.as_str());
+            working_dir_arg = working_dir;
         }
         _ => {
             panic!("Service main called without --cmd argument");
@@ -84,7 +86,7 @@ pub fn service_main(_args: Vec<OsString>) {
     let running_bg = Arc::clone(&running);
 
     while running_bg.load(Ordering::SeqCst) {
-        if let Ok(mut child) = run_command(&cmd_arg) {
+        if let Ok(mut child) = run_command(&cmd_arg, working_dir_arg.clone()) {
             info!("Child process started with PID: {}", child.id());
 
             // Poll for shutdown
@@ -127,12 +129,25 @@ pub fn service_main(_args: Vec<OsString>) {
         .expect("set service stopped");
 }
 
-pub fn install_service(name: &str, service_cmd: String) {
+pub fn install_service(name: &str, working_dir: Option<String>, service_cmd: &str) {
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)
         .expect("Failed to connect to service manager");
 
     let executable_path = ::std::env::current_exe().unwrap();
+
+    let mut launch_arguments = vec![
+        OsString::from("run"),
+        OsString::from("--cmd"),
+        OsString::from(service_cmd),
+        OsString::from("--name"),
+        OsString::from(name),
+    ];
+
+    if working_dir.is_some() {
+        launch_arguments.push(OsString::from("--working-dir"));
+        launch_arguments.push(OsString::from(working_dir.unwrap()));
+    }
 
     let service_info = ServiceInfo {
         name: OsString::from(name),
@@ -141,13 +156,7 @@ pub fn install_service(name: &str, service_cmd: String) {
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
         executable_path: executable_path.into(),
-        launch_arguments: vec![
-            OsString::from("run"),
-            OsString::from("--cmd"),
-            OsString::from(service_cmd),
-            OsString::from("--name"),
-            OsString::from(name),
-        ],
+        launch_arguments,
         dependencies: vec![],
         account_name: None,
         account_password: None,

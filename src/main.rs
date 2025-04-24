@@ -35,16 +35,16 @@ fn main() {
                 table.printstd();
             }
         }
-        Some(Commands::Install { cmd, name }) => {
+        Some(Commands::Install {
+            cmd,
+            working_dir,
+            name,
+        }) => {
             let svc_name = get_service_name(&name);
             let _guard = setup_logging(&svc_name);
 
-            if let Some(cmd) = cmd {
-                install_service(&svc_name, cmd);
-                info!("Service '{}' installed successfully.", svc_name);
-            } else {
-                error!("--cmd is required with install");
-            }
+            install_service(&svc_name, working_dir, &cmd);
+            info!("Service '{}' installed successfully.", svc_name);
         }
         Some(Commands::Uninstall { name }) => {
             let svc_name = get_service_name(&name);
@@ -61,20 +61,20 @@ fn main() {
                 );
             }
         }
-        Some(Commands::Run { cmd, name }) => {
+        Some(Commands::Run {
+            cmd,
+            working_dir,
+            name,
+        }) => {
             let _guard = setup_logging(&name);
 
             define_windows_service!(ffi_service_main, service_main);
 
             if let Err(_e) = service_dispatcher::start(name, ffi_service_main) {
-                if let Some(cmd) = cmd {
-                    if let Ok(mut child) = run_command(&cmd) {
-                        if let Err(e) = child.wait() {
-                            error!("Failed to wait for child process: {}", e);
-                        }
+                if let Ok(mut child) = run_command(&cmd, working_dir) {
+                    if let Err(e) = child.wait() {
+                        error!("Failed to wait for child process: {}", e);
                     }
-                } else {
-                    error!("--cmd is required with run");
                 }
             }
         }
