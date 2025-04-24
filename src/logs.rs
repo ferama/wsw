@@ -1,5 +1,5 @@
 use chrono::Local;
-// use chrono::Local;
+use encoding_rs::{Encoding, WINDOWS_1252};
 use tracing_appender::non_blocking::WorkerGuard;
 
 use std::env;
@@ -64,18 +64,18 @@ pub struct LogWriter;
 
 impl Write for LogWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match std::str::from_utf8(buf) {
-            Ok(s) => {
-                // Optionally trim trailing newlines or chunk it better
-                for line in s.lines() {
-                    if line.is_empty() {
-                        continue;
+        let decoded = try_decode(buf);
+
+        match decoded {
+            Some(text) => {
+                for line in text.lines() {
+                    if !line.trim().is_empty() {
+                        info!("{}", line);
                     }
-                    info!("{}", line);
                 }
             }
-            Err(_) => {
-                info!("<non-utf8 data>");
+            None => {
+                error!("<unreadable data: {:?}>", buf);
             }
         }
         Ok(buf.len())
@@ -84,4 +84,39 @@ impl Write for LogWriter {
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
     }
+}
+
+fn try_decode(buf: &[u8]) -> Option<String> {
+    // 1. Try UTF-8
+    if let Ok(s) = std::str::from_utf8(buf) {
+        return Some(s.to_string());
+    }
+
+    // 2. Try UTF-16LE (only if even length)
+    if buf.len() % 2 == 0 {
+        let utf16: Vec<u16> = buf
+            .chunks(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        if let Ok(s) = String::from_utf16(&utf16) {
+            return Some(s);
+        }
+    }
+
+    // 3. Try Windows-1252
+    let (s_win1252, _, had_errors) = WINDOWS_1252.decode(buf);
+    if !had_errors {
+        return Some(s_win1252.into_owned());
+    }
+
+    // 4. Try CP437 (OEM US)
+    if let Some(cp437) = Encoding::for_label(b"ibm437") {
+        let (s, _, had_errors) = cp437.decode(buf);
+        if !had_errors {
+            return Some(s.into_owned());
+        }
+    }
+
+    // 5. Give up
+    None
 }

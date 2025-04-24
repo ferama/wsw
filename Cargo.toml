@@ -13,6 +13,7 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 which = "7.0.3"
 windows = { version = "0.61", features = ["Win32_System_Services"] }
 windows-service = "0.8.0"
+encoding_rs = "0.8"
 
 [profile.release]
 opt-level = 2
