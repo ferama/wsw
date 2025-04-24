@@ -2,7 +2,6 @@
 
 > 💡 A tiny, practical tool that lets **any executable or script** run as a **real Windows service**, with zero boilerplate.
 
----
 
 ## 🚀 What is WSW?
 
@@ -17,7 +16,6 @@ If you've ever tried to:
 
 **Then WSW is for you.**
 
----
 
 ## ✅ Features
 
@@ -28,7 +26,6 @@ If you've ever tried to:
 - 📜 Logs every restart attempt and failure  
 - 💼 Built with **pure Go**, no unsafe code  
 
----
 
 ## 🔧 Usage
 
@@ -52,7 +49,6 @@ This will:
 - Configure it to launch `app.exe --arg1 --arg2`  
 - Automatically start it  
 
----
 
 ### 🧹 Uninstall the service:
 
@@ -61,8 +57,6 @@ wsw.exe uninstall --name myapp
 ```
 
 Stops and removes the service cleanly.
-
----
 
 ### 🧪 Run manually (for testing):
 
@@ -74,8 +68,6 @@ wsw.exe run --cmd "C:\MyApp\app.exe --arg1 --arg2"
 
 This is how the Windows Service Manager internally starts it — useful for debugging.
 
----
-
 ## 🔍 How it works
 
 WSW installs itself as a service and monitors a child process (your actual app).  
@@ -86,16 +78,12 @@ This makes your app:
 - Resilient to crashes  
 - Easy to deploy  
 
----
-
 ## 📦 Use case examples
 
 - Running a Go, Rust, Net, any other runnable app as a service  
 - Auto-starting a CLI tool with logging on boot  
 - Running off-the-shelf tools like Python or Powershell scripts in the background  
 - Easy service wrapping in CI setups or cloud VMs  
-
----
 
 ## 📺 Prevent Windows Defender complaints
 
@@ -110,13 +98,9 @@ Add-MpPreference -ExclusionPath "C:\Path\To\wsw"
 ```
 Replace C:\Path\To\wsw with the actual installation path.
 
----
-
 ## 📄 License
 
 MIT
-
----
 
 ## ❤️ Contribute
 
