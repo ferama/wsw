@@ -110,7 +110,6 @@ Add-MpPreference -ExclusionPath "C:\Path\To\wsw"
 ```
 Replace C:\Path\To\wsw with the actual installation path.
 
-
 ---
 
 ## 📄 License
