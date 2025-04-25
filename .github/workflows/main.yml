@@ -54,7 +54,6 @@ jobs:
         with:
           name: binaries-${{ matrix.target }}
           path: |
-            target/${{ matrix.target}}/release/wsw.exe
             target/${{ matrix.target }}/release/wsw-${{ matrix.target }}.msi
       
 
