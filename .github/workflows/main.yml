@@ -17,12 +17,15 @@ jobs:
         include:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
+            arch_name: x86_64
 
           - target: aarch64-pc-windows-msvc
+            arch_name: aarch64
             os: windows-latest
           
           - target: i686-pc-windows-msvc
             os: windows-latest
+            arch_name: i686
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -52,7 +55,7 @@ jobs:
       - name: Upload built binaries
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-${{ matrix.target }}
+          name: wsw-${{ matrix.arch_name }}
           path: |
             target/${{ matrix.target }}/release/wsw-${{ matrix.target }}.msi
       
