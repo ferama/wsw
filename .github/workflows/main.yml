@@ -25,9 +25,11 @@ jobs:
       
       - name: Install WiX Toolset
         run: |
-          cargo install cargo-wix
-          winget install --id=WiXToolset.WiXToolset  -e
+          cargo install --version 0.3.9 cargo-wix
+          # winget install --id=WiXToolset.WiXToolset  -e
         shell: powershell
+        env:
+          RUSTFLAGS: ""
 
       - name: Build release binary
         run: cargo build --release --target x86_64-pc-windows-msvc
