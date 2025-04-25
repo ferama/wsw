@@ -35,7 +35,7 @@ jobs:
         run: cargo build --release --target x86_64-pc-windows-msvc
       
       - name: Build MSI Installer
-        run: cargo wix --target x86_64-pc-windows-msvc
+        run: cargo wix --target x86_64-pc-windows-msvc --nocapture
       
       - name: Upload binary to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
