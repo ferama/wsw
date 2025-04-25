@@ -10,8 +10,23 @@ on:
 
 jobs:
   build:
-    name: Build Binary (MSVC)
-    runs-on: windows-latest
+    name: Build release binaries
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+          
+          - target: i686-pc-windows-msvc
+            os: windows-latest
+
+    runs-on: ${{ matrix.os }}
+    # env:
+    #   RUSTFLAGS: '-C target-feature=+crt-static'
 
     steps:
       - name: Checkout code
@@ -21,7 +36,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          target: x86_64-pc-windows-msvc
+          target: ${{ matrix.target }}
       
       - name: Install cargo-wix
         run: |
@@ -31,14 +46,33 @@ jobs:
           RUSTFLAGS: ""
 
       - name: Build release binary
-        run: cargo build --release --target x86_64-pc-windows-msvc
+        run: cargo build --release --target ${{ matrix.target }}
       
       - name: Build MSI Installer
-        run: cargo wix --no-build --target x86_64-pc-windows-msvc --nocapture
+        run: cargo wix --no-build --target ${{ matrix.target }} --nocapture
       
-      - name: Upload binary to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Upload built binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target}}/release/wsw.exe
+            target/${{ matrix.target}}/wix/*.msi
+      
+
+  upload:
+    name: Upload Release Artifacts
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "target/x86_64-pc-windows-msvc/release/wsw.exe"
+          artifacts: artifacts/**/*
           token: ${{ secrets.GITHUB_TOKEN }}
