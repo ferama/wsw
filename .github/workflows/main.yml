@@ -52,11 +52,18 @@ jobs:
           --target ${{ matrix.target }} 
           --output target/${{ matrix.target }}/release/wsw-${{ matrix.target }}.msi
       
+      - name: Create ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/wsw.exe" `
+            -DestinationPath "target/${{ matrix.target }}/release/wsw-${{ matrix.target }}.zip"
+      
       - name: Upload built binaries
         uses: actions/upload-artifact@v4
         with:
           name: wsw-${{ matrix.arch_name }}
           path: |
+            target/${{ matrix.target }}/release/wsw-${{ matrix.target }}.zip
             target/${{ matrix.target }}/release/wsw-${{ matrix.target }}.msi
       
 
