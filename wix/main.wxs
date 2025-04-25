@@ -121,17 +121,6 @@
                                 Source='$(var.CargoTargetBinDir)\wsw.exe'
                                 KeyPath='yes'/>
                         </Component>
-                        <!-- New Component: Append bin folder to system PATH -->
-                        <Component Id='PathUpdate' Guid='232c23e0-2dea-4fb4-850d-b7c5b6edaf4d' KeyPath='yes'>
-                          <RegistryValue
-                            Root="HKLM"
-                            Key="SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
-                            Name="Path"
-                            Value="[Bin];[~]Path"
-                            Type="expandable"
-                            Action="write"
-                            />
-                        </Component>
                     </Directory>
                 </Directory>
             </Directory>
