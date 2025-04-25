@@ -66,10 +66,8 @@ fn main() {
             working_dir,
             name,
         }) => {
-            let _guard = setup_logging(&name);
-
             define_windows_service!(ffi_service_main, service_main);
-
+            let _guard = setup_logging(&name);
             if let Err(_e) = service_dispatcher::start(name, ffi_service_main) {
                 if let Ok(mut child) = run_command(&cmd, working_dir) {
                     if let Err(e) = child.wait() {

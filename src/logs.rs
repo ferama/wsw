@@ -23,17 +23,31 @@ impl FormatTime for LocalTimer {
 }
 
 pub fn setup_logging(name: &str) -> WorkerGuard {
-    let log_path: PathBuf = match env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("logs")))
-    {
-        Some(path) => path,
-        None => {
-            error!("Failed to get current executable path.");
-            PathBuf::from("logs")
+    let log_path = match env::var("PROGRAMDATA") {
+        Ok(path) => {
+            let log_path = PathBuf::from(path).join("wsw").join("logs");
+            std::fs::create_dir_all(&log_path).unwrap_or_else(|_| {
+                // logs is not ready here, so use eprintln! and not error!
+                eprintln!("Failed to create log directory: {:?}", log_path);
+            });
+            log_path
+        }
+        Err(_) => {
+            eprintln!("Failed to get PROGRAMDATA environment variable.");
+            let log_path: PathBuf = match env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(|dir| dir.join("logs")))
+            {
+                Some(path) => path,
+                None => {
+                    eprintln!("Failed to get current executable path.");
+                    PathBuf::from("logs")
+                }
+            };
+            log_path
         }
     };
-    let file_appender = rolling::daily(log_path, name);
+    let file_appender = rolling::daily(log_path.clone(), name);
     let (non_blocking_file, guard) = tracing_appender::non_blocking(file_appender); // Set up logging here if needed
 
     // Console layer (stderr by default, can also write to stdout)
@@ -56,6 +70,8 @@ pub fn setup_logging(name: &str) -> WorkerGuard {
         .with(file_layer);
 
     tracing::subscriber::set_global_default(subscriber).expect("Failed to set up logging");
+
+    info!("Log path: {:?}", log_path);
 
     guard
 }
