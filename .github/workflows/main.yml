@@ -25,7 +25,8 @@ jobs:
       
       - name: Install WiX Toolset
         run: |
-          choco install wix --version=3.11.2 -y
+          cargo install cargo-wix
+          winget install --id=WiXToolset.WiXToolset  -e
         shell: powershell
 
       - name: Build release binary
