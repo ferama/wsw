@@ -7,14 +7,8 @@ pub fn handle(name: &str) {
     let svc_name = get_service_name(&name);
     let _guard = setup_logging(&svc_name);
 
-    let res = uninstall_service(&svc_name);
-    if res.is_ok() {
-        tracing::info!("Service '{}' uninstalled successfully.", svc_name);
-    } else {
-        tracing::error!(
-            "Failed to uninstall service '{}': {}",
-            name,
-            res.unwrap_err()
-        );
+    match uninstall_service(&svc_name) {
+        Ok(_) => tracing::info!("Service '{}' uninstalled successfully.", svc_name),
+        Err(e) => tracing::error!("Failed to uninstall service '{}': {}", svc_name, e),
     }
 }

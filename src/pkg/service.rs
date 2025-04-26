@@ -128,12 +128,15 @@ pub fn service_main(_args: Vec<OsString>) {
         .expect("set service stopped");
 }
 
-pub fn install_service(name: &str, working_dir: Option<String>, service_cmd: &str) {
+pub fn install_service(
+    name: &str,
+    working_dir: Option<String>,
+    service_cmd: &str,
+) -> windows_service::Result<()> {
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
-    let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)
-        .expect("Failed to connect to service manager");
+    let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
 
-    let executable_path = ::std::env::current_exe().unwrap();
+    let executable_path = std::env::current_exe().unwrap();
 
     let mut launch_arguments = vec![
         OsString::from("run"),
@@ -143,9 +146,9 @@ pub fn install_service(name: &str, working_dir: Option<String>, service_cmd: &st
         OsString::from(name),
     ];
 
-    if working_dir.is_some() {
+    if let Some(dir) = working_dir {
         launch_arguments.push(OsString::from("--working-dir"));
-        launch_arguments.push(OsString::from(working_dir.unwrap()));
+        launch_arguments.push(OsString::from(dir));
     }
 
     let service_info = ServiceInfo {
@@ -161,13 +164,10 @@ pub fn install_service(name: &str, working_dir: Option<String>, service_cmd: &st
         account_password: None,
     };
 
-    let service = service_manager
-        .create_service(&service_info, ServiceAccess::START)
-        .expect("Failed to create service");
+    let service = service_manager.create_service(&service_info, ServiceAccess::START)?;
 
-    service
-        .start::<std::ffi::OsString>(&[])
-        .expect("Failed to start service");
+    service.start::<std::ffi::OsString>(&[])?;
+    Ok(())
 }
 
 pub fn uninstall_service(name: &str) -> windows_service::Result<()> {
@@ -206,6 +206,39 @@ pub fn uninstall_service(name: &str) -> windows_service::Result<()> {
 
     // Now delete it
     service.delete()?;
+    Ok(())
+}
+
+pub fn start_service(name: &str) -> windows_service::Result<()> {
+    // Connect to the SCM
+    let manager = ServiceManager::local_computer(
+        None::<&str>,
+        ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
+    )?;
+
+    // Open the existing service
+    let service = manager.open_service(name, ServiceAccess::START | ServiceAccess::QUERY_STATUS)?;
+
+    // Start the service
+    service.start::<std::ffi::OsString>(&[])?;
+    Ok(())
+}
+
+pub fn stop_service(name: &str) -> windows_service::Result<()> {
+    // Connect to the SCM
+    let manager = ServiceManager::local_computer(
+        None::<&str>,
+        ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
+    )?;
+
+    // Open the existing service
+    let service = manager.open_service(
+        name,
+        ServiceAccess::STOP | ServiceAccess::QUERY_STATUS | ServiceAccess::DELETE,
+    )?;
+
+    // Stop the service
+    service.stop()?;
     Ok(())
 }
 
