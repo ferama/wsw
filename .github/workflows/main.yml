@@ -79,8 +79,8 @@ jobs:
 
       - name: Checksums
         run: |
-          for file in artifacts/wsw-*; do openssl dgst -sha256 -r "$file" | awk '{print $1}' > "${file}.sha256"; done
-          find artifats
+          for file in artifacts/wsw-*/wsw-*; do openssl dgst -sha256 -r "$file" | awk '{print $1}' > "${file}.sha256"; done
+          find artifacts
       
       - name: Create GitHub Release
         uses: ncipollo/release-action@v1
