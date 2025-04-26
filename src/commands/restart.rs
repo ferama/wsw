@@ -2,7 +2,7 @@ use windows_service::service::ServiceState;
 
 use crate::pkg::{
     logs::setup_logging,
-    service::{get_service_name, start_service, stop_service, wait_service_status},
+    service::{get_service_name, start_service, stop_service, wait_for_service_status},
 };
 
 pub fn handle(name: &str) {
@@ -12,7 +12,7 @@ pub fn handle(name: &str) {
     match stop_service(&svc_name) {
         Ok(_) => {
             tracing::info!("Service '{}' stopped successfully.", svc_name);
-            match wait_service_status(
+            match wait_for_service_status(
                 &svc_name,
                 ServiceState::Stopped,
                 std::time::Duration::from_secs(10),

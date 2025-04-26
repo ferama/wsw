@@ -183,7 +183,7 @@ pub fn uninstall_service(name: &str) -> windows_service::Result<()> {
         ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::DELETE,
     )?;
 
-    match wait_service_status(
+    match wait_for_service_status(
         &name,
         ServiceState::Stopped,
         std::time::Duration::from_secs(10),
@@ -212,7 +212,7 @@ pub fn start_service(name: &str) -> windows_service::Result<()> {
     Ok(())
 }
 
-pub fn wait_service_status(
+pub fn wait_for_service_status(
     name: &str,
     target_state: ServiceState,
     timeout: Duration,

@@ -15,6 +15,12 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    #[command()]
+    Logs {
+        /// Name of the service to start
+        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        name: String,
+    },
     /// Show the status of the Windows services managed from 'wsw'
     #[command(visible_alias = "ls")]
     List,
