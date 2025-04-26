@@ -1,7 +1,12 @@
 [package]
 name = "wsw"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
+authors = ["Marco Ferragina <marco.ferragina@gmail.com>"]
+readme = "README.md"
+homepage = "https://github.com/ferama/wsw"
+license = "MIT"
+description = "A tiny, practical tool that lets any executable run as a real Windows service, with zero boilerplate."
 
 [dependencies]
 chrono = "0.4.40"
