@@ -39,7 +39,9 @@ pub enum Commands {
         #[arg(long, short = 'n', default_value_t = String::from(SERVICE_NAME_PREFIX))]
         name: String,
     },
-    /// Run in service mode (called by the system)
+    /// Run in service mode (called by the system or for debugging)
+    /// This command is not intended to be called directly from the command line
+    #[command(hide = true)]
     Run {
         /// Path and args for the executable to run
         #[arg(long, short = 'c')]

@@ -79,7 +79,7 @@ fn main() {
         None => {
             let help = Cli::command().render_help();
             println!("{}", help.ansi());
-            std::process::exit(1);
+            std::process::exit(0);
         }
     }
 }
