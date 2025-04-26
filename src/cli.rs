@@ -21,6 +21,9 @@ pub enum Commands {
         /// Name of the service to show logs for
         #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
         name: String,
+        /// Follow the log file and show new lines as they are added
+        #[arg(long, short, default_value_t = false)]
+        follow: bool,
     },
     /// Show the status of the Windows services managed from 'wsw'
     #[command(visible_alias = "ls")]

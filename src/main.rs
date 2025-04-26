@@ -11,8 +11,8 @@ fn main() {
     let cli = Cli::parse();
     // If parsing fails, clap will print the error and exit
     match cli.command {
-        Some(Commands::Logs { name }) => {
-            commands::logs::handle(&name);
+        Some(Commands::Logs { name, follow }) => {
+            commands::logs::handle(&name, follow);
         }
         Some(Commands::List) => {
             commands::list::handle();

@@ -20,7 +20,7 @@ impl FormatTime for LocalTimer {
     }
 }
 
-pub fn setup_logging(name: &str) -> WorkerGuard {
+pub fn get_log_dir() -> PathBuf {
     let log_path = match env::var("PROGRAMDATA") {
         Ok(path) => {
             let log_path = PathBuf::from(path).join("wsw").join("logs");
@@ -45,7 +45,16 @@ pub fn setup_logging(name: &str) -> WorkerGuard {
             log_path
         }
     };
-    let file_appender = rolling::daily(log_path.clone(), format!("{}.log", name));
+    log_path
+}
+
+pub fn get_log_filename_prefix(name: &str) -> String {
+    format!("{}.log", name)
+}
+
+pub fn setup_logging(name: &str) -> WorkerGuard {
+    let log_path = get_log_dir();
+    let file_appender = rolling::daily(log_path.clone(), get_log_filename_prefix(name));
     let (non_blocking_file, guard) = tracing_appender::non_blocking(file_appender); // Set up logging here if needed
 
     // Console layer (stderr by default, can also write to stdout)
