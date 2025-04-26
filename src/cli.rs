@@ -15,9 +15,10 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Show the logs of the Windows service managed from 'wsw'
     #[command()]
     Logs {
-        /// Name of the service to start
+        /// Name of the service to show logs for
         #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
         name: String,
     },
@@ -34,6 +35,13 @@ pub enum Commands {
     /// Stop a service
     #[command()]
     Stop {
+        /// Name of the service to start
+        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        name: String,
+    },
+    /// Print a service status
+    #[command()]
+    Status {
         /// Name of the service to start
         #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
         name: String,

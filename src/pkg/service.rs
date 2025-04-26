@@ -212,6 +212,21 @@ pub fn start_service(name: &str) -> windows_service::Result<()> {
     Ok(())
 }
 
+pub fn get_service_status(name: &str) -> windows_service::Result<ServiceStatus> {
+    // Connect to the SCM
+    let manager = ServiceManager::local_computer(
+        None::<&str>,
+        ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
+    )?;
+
+    // Open the existing service
+    let service = manager.open_service(name, ServiceAccess::QUERY_STATUS)?;
+
+    // Query the service status
+    let status = service.query_status()?;
+    Ok(status)
+}
+
 pub fn wait_for_service_status(
     name: &str,
     target_state: ServiceState,

@@ -4,5 +4,6 @@ pub mod logs;
 pub mod restart;
 pub mod run;
 pub mod start;
+pub mod status;
 pub mod stop;
 pub mod uninstall;

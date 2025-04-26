@@ -19,6 +19,7 @@ fn main() {
         }
         Some(Commands::Start { name }) => commands::start::handle(&name),
         Some(Commands::Stop { name }) => commands::stop::handle(&name),
+        Some(Commands::Status { name }) => commands::status::handle(&name),
         Some(Commands::Restart { name }) => commands::restart::handle(&name),
         Some(Commands::Install {
             cmd,
