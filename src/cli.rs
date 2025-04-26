@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand, command};
 
-use crate::service::SERVICE_NAME_PREFIX;
+use crate::pkg::service::SERVICE_NAME_PREFIX;
 
 #[derive(Parser)]
 #[command(

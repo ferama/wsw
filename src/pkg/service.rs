@@ -22,10 +22,9 @@ use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
 use std::ffi::OsString;
 
-use crate::{
-    cli::{Cli, Commands},
-    runner::run_command,
-};
+use crate::cli::{Cli, Commands};
+
+use super::runner::run_command;
 
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 pub const SERVICE_NAME_PREFIX: &str = "wsw";
