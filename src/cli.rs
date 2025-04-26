@@ -24,6 +24,10 @@ pub enum Commands {
         /// Follow the log file and show new lines as they are added
         #[arg(long, short, default_value_t = false)]
         follow: bool,
+        /// Show all log lines including the ones from the wsw service wrapper itself
+        /// This is useful for debugging the service itself
+        #[arg(long, default_value_t = false)]
+        full: bool,
     },
     /// Show the status of the Windows services managed from 'wsw'
     #[command(visible_alias = "ls")]

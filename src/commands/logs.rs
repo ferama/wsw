@@ -6,12 +6,12 @@ use std::{
 
 use crate::pkg::{
     logs::{self, get_log_filename_prefix},
+    runner::SERVICE_LOG_PREFIX,
     service::get_service_name,
 };
 
-pub fn handle(name: &str, follow: bool) {
+pub fn handle(name: &str, follow: bool, full: bool) {
     let svc_name = get_service_name(&name);
-    let _guard = logs::setup_logging(&svc_name);
 
     let log_dir = logs::get_log_dir();
     let res = fs::read_dir(log_dir.clone());
@@ -25,7 +25,7 @@ pub fn handle(name: &str, follow: bool) {
                         && path
                             .file_name()
                             .and_then(|f| f.to_str())
-                            .map(|f| f.starts_with(get_log_filename_prefix(name).as_str()))
+                            .map(|f| f.starts_with(get_log_filename_prefix(&svc_name).as_str()))
                             .unwrap_or(false)
                 })
                 .collect();
@@ -47,7 +47,13 @@ pub fn handle(name: &str, follow: bool) {
                 let reader = BufReader::new(file.try_clone().unwrap());
                 for line_result in reader.lines() {
                     if let Ok(line) = line_result {
-                        println!("{}", line);
+                        if full {
+                            println!("{}", line);
+                        } else {
+                            if let Some(message) = extract_message(&line) {
+                                println!("{}", message);
+                            }
+                        }
                     } else {
                         eprintln!("Failed to read line from log file: {:?}", latest_log);
                     }
@@ -58,7 +64,13 @@ pub fn handle(name: &str, follow: bool) {
                     let mut lines = reader.lines().peekable();
                     while lines.peek().is_some() {
                         if let Some(Ok(line)) = lines.next() {
-                            println!("{}", line);
+                            if full {
+                                println!("{}", line);
+                            } else {
+                                if let Some(message) = extract_message(&line) {
+                                    println!("{}", message);
+                                }
+                            }
                         } else {
                             eprintln!("Failed to read line from log file: {:?}", latest_log);
                         }
@@ -71,5 +83,33 @@ pub fn handle(name: &str, follow: bool) {
             eprintln!("Failed to read log directory: {}", e);
             return;
         }
+    }
+}
+
+/// Extracts the log message from a log line formatted as:
+/// `2025-04-27 00:59:24  LEVEL  MESSAGE`
+fn extract_message(line: &str) -> Option<&str> {
+    // Skip timestamp (first 19 characters) + 2 spaces
+    if line.len() < 21 {
+        return None;
+    }
+    let after_timestamp = &line[21..];
+
+    // Find the next space after LEVEL
+    if let Some(space_idx) = after_timestamp.find(' ') {
+        let message_start = 21 + space_idx + 1;
+        if message_start < line.len() {
+            let message = &line[message_start..];
+            if message.trim_start().starts_with(SERVICE_LOG_PREFIX) {
+                Some(message.trim_start()[SERVICE_LOG_PREFIX.len()..].trim())
+            } else {
+                // If the message doesn't start with the service log prefix, return None
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
     }
 }
