@@ -32,6 +32,13 @@ pub enum Commands {
         #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
         name: String,
     },
+    /// Restart a service
+    #[command()]
+    Restart {
+        /// Name of the service to start
+        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        name: String,
+    },
     /// Install and start the Windows service
     #[command(visible_alias = "i")]
     Install {

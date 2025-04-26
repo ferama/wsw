@@ -183,25 +183,13 @@ pub fn uninstall_service(name: &str) -> windows_service::Result<()> {
         ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::DELETE,
     )?;
 
-    // Stop the service if it's running
-    let status = service.query_status()?;
-    if status.current_state != ServiceState::Stopped {
-        service.stop()?;
-
-        // Wait for the service to stop
-        let timeout = std::time::Duration::from_secs(10);
-        let start = std::time::Instant::now();
-        loop {
-            let status = service.query_status()?;
-            if status.current_state == ServiceState::Stopped {
-                break;
-            }
-            if start.elapsed() > timeout {
-                error!("Timeout waiting for service to stop");
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        }
+    match wait_service_status(
+        &name,
+        ServiceState::Stopped,
+        std::time::Duration::from_secs(10),
+    ) {
+        Ok(_) => tracing::info!("Service '{}' is now stopped.", name),
+        Err(e) => tracing::error!("Failed to wait for service '{}': {}", name, e),
     }
 
     // Now delete it
@@ -221,6 +209,37 @@ pub fn start_service(name: &str) -> windows_service::Result<()> {
 
     // Start the service
     service.start::<std::ffi::OsString>(&[])?;
+    Ok(())
+}
+
+pub fn wait_service_status(
+    name: &str,
+    target_state: ServiceState,
+    timeout: Duration,
+) -> windows_service::Result<()> {
+    // Connect to the SCM
+    let manager = ServiceManager::local_computer(
+        None::<&str>,
+        ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
+    )?;
+
+    // Open the existing service
+    let service = manager.open_service(name, ServiceAccess::QUERY_STATUS)?;
+
+    // Wait for the service to reach the target state
+    loop {
+        let status = service.query_status()?;
+        let start = std::time::Instant::now();
+        if start.elapsed() > timeout {
+            tracing::error!("Timeout waiting for service status to change");
+            // TODO: Handle timeout error
+            break;
+        }
+        if status.current_state == target_state {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
     Ok(())
 }
 
