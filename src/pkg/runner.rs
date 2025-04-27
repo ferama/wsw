@@ -9,6 +9,8 @@ use std::{
 use tracing::{error, info};
 use which::which;
 
+pub const SERVICE_LOG_PREFIX: &str = "|SVC-LOG| ";
+
 pub struct LogWriter;
 
 impl Write for LogWriter {
@@ -18,13 +20,13 @@ impl Write for LogWriter {
         match decoded {
             Some(text) => {
                 for line in text.lines() {
-                    if !line.trim().is_empty() {
-                        info!("|SVC| {}", line);
+                    if !line.is_empty() {
+                        info!("{}{}", SERVICE_LOG_PREFIX, line);
                     }
                 }
             }
             None => {
-                error!("|SVC| <unreadable data: {:?}>", buf);
+                error!("{}<unreadable data: {:?}>", SERVICE_LOG_PREFIX, buf);
             }
         }
         Ok(buf.len())

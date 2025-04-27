@@ -22,10 +22,9 @@ use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
 use std::ffi::OsString;
 
-use crate::{
-    cli::{Cli, Commands},
-    runner::run_command,
-};
+use crate::cli::{Cli, Commands};
+
+use super::runner::run_command;
 
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 pub const SERVICE_NAME_PREFIX: &str = "wsw";
@@ -129,12 +128,15 @@ pub fn service_main(_args: Vec<OsString>) {
         .expect("set service stopped");
 }
 
-pub fn install_service(name: &str, working_dir: Option<String>, service_cmd: &str) {
+pub fn install_service(
+    name: &str,
+    working_dir: Option<String>,
+    service_cmd: &str,
+) -> windows_service::Result<()> {
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
-    let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)
-        .expect("Failed to connect to service manager");
+    let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
 
-    let executable_path = ::std::env::current_exe().unwrap();
+    let executable_path = std::env::current_exe().unwrap();
 
     let mut launch_arguments = vec![
         OsString::from("run"),
@@ -144,9 +146,9 @@ pub fn install_service(name: &str, working_dir: Option<String>, service_cmd: &st
         OsString::from(name),
     ];
 
-    if working_dir.is_some() {
+    if let Some(dir) = working_dir {
         launch_arguments.push(OsString::from("--working-dir"));
-        launch_arguments.push(OsString::from(working_dir.unwrap()));
+        launch_arguments.push(OsString::from(dir));
     }
 
     let service_info = ServiceInfo {
@@ -162,13 +164,10 @@ pub fn install_service(name: &str, working_dir: Option<String>, service_cmd: &st
         account_password: None,
     };
 
-    let service = service_manager
-        .create_service(&service_info, ServiceAccess::START)
-        .expect("Failed to create service");
+    let service = service_manager.create_service(&service_info, ServiceAccess::START)?;
 
-    service
-        .start::<std::ffi::OsString>(&[])
-        .expect("Failed to start service");
+    service.start::<std::ffi::OsString>(&[])?;
+    Ok(())
 }
 
 pub fn uninstall_service(name: &str) -> windows_service::Result<()> {
@@ -184,29 +183,96 @@ pub fn uninstall_service(name: &str) -> windows_service::Result<()> {
         ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::DELETE,
     )?;
 
-    // Stop the service if it's running
-    let status = service.query_status()?;
-    if status.current_state != ServiceState::Stopped {
-        service.stop()?;
-
-        // Wait for the service to stop
-        let timeout = std::time::Duration::from_secs(10);
-        let start = std::time::Instant::now();
-        loop {
-            let status = service.query_status()?;
-            if status.current_state == ServiceState::Stopped {
-                break;
-            }
-            if start.elapsed() > timeout {
-                error!("Timeout waiting for service to stop");
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        }
+    match wait_for_service_status(
+        &name,
+        ServiceState::Stopped,
+        std::time::Duration::from_secs(10),
+    ) {
+        Ok(_) => tracing::info!("Service '{}' is now stopped.", name),
+        Err(e) => tracing::error!("Failed to wait for service '{}': {}", name, e),
     }
 
     // Now delete it
     service.delete()?;
+    Ok(())
+}
+
+pub fn start_service(name: &str) -> windows_service::Result<()> {
+    // Connect to the SCM
+    let manager = ServiceManager::local_computer(
+        None::<&str>,
+        ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
+    )?;
+
+    // Open the existing service
+    let service = manager.open_service(name, ServiceAccess::START | ServiceAccess::QUERY_STATUS)?;
+
+    // Start the service
+    service.start::<std::ffi::OsString>(&[])?;
+    Ok(())
+}
+
+pub fn get_service_status(name: &str) -> windows_service::Result<ServiceStatus> {
+    // Connect to the SCM
+    let manager = ServiceManager::local_computer(
+        None::<&str>,
+        ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
+    )?;
+
+    // Open the existing service
+    let service = manager.open_service(name, ServiceAccess::QUERY_STATUS)?;
+
+    // Query the service status
+    let status = service.query_status()?;
+    Ok(status)
+}
+
+pub fn wait_for_service_status(
+    name: &str,
+    target_state: ServiceState,
+    timeout: Duration,
+) -> windows_service::Result<()> {
+    // Connect to the SCM
+    let manager = ServiceManager::local_computer(
+        None::<&str>,
+        ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
+    )?;
+
+    // Open the existing service
+    let service = manager.open_service(name, ServiceAccess::QUERY_STATUS)?;
+
+    // Wait for the service to reach the target state
+    loop {
+        let status = service.query_status()?;
+        let start = std::time::Instant::now();
+        if start.elapsed() > timeout {
+            tracing::error!("Timeout waiting for service status to change");
+            // TODO: Handle timeout error
+            break;
+        }
+        if status.current_state == target_state {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    Ok(())
+}
+
+pub fn stop_service(name: &str) -> windows_service::Result<()> {
+    // Connect to the SCM
+    let manager = ServiceManager::local_computer(
+        None::<&str>,
+        ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
+    )?;
+
+    // Open the existing service
+    let service = manager.open_service(
+        name,
+        ServiceAccess::STOP | ServiceAccess::QUERY_STATUS | ServiceAccess::DELETE,
+    )?;
+
+    // Stop the service
+    service.stop()?;
     Ok(())
 }
 

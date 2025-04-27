@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand, command};
 
-use crate::service::SERVICE_NAME_PREFIX;
+use crate::pkg::service::SERVICE_NAME_PREFIX;
 
 #[derive(Parser)]
 #[command(
@@ -15,28 +15,70 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Show the logs of the Windows service managed from 'wsw'
+    #[command()]
+    Logs {
+        /// Name of the service to show logs for
+        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        name: String,
+        /// Follow the log file and show new lines as they are added
+        #[arg(long, short, default_value_t = false)]
+        follow: bool,
+        /// Show all log lines including the ones from the wsw service wrapper itself
+        /// This is useful for debugging the service itself
+        #[arg(long, default_value_t = false)]
+        full: bool,
+    },
     /// Show the status of the Windows services managed from 'wsw'
     #[command(visible_alias = "ls")]
     List,
+    /// Start a service
+    #[command()]
+    Start {
+        /// Name of the service to start
+        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        name: String,
+    },
+    /// Stop a service
+    #[command()]
+    Stop {
+        /// Name of the service to start
+        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        name: String,
+    },
+    /// Print a service status
+    #[command()]
+    Status {
+        /// Name of the service to start
+        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        name: String,
+    },
+    /// Restart a service
+    #[command()]
+    Restart {
+        /// Name of the service to start
+        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        name: String,
+    },
     /// Install and start the Windows service
     #[command(visible_alias = "i")]
     Install {
         /// Path and args for the executable to run as a service
-        #[arg(long, short = 'c')]
+        #[arg(long, short)]
         cmd: String,
         /// Service working directory
         /// If not specified, the target directory of the executable (cmd arg) will be used
         #[arg(long)]
         working_dir: Option<String>,
         /// Name of the service to install
-        #[arg(long, short = 'n', default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
         name: String,
     },
     /// Stop and uninstall the Windows service
     #[command(visible_alias = "u")]
     Uninstall {
         /// Name of the service to uninstall
-        #[arg(long, short = 'n', default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
         name: String,
     },
     /// Run in service mode (called by the system or for debugging)
@@ -44,14 +86,14 @@ pub enum Commands {
     #[command(hide = true)]
     Run {
         /// Path and args for the executable to run
-        #[arg(long, short = 'c')]
+        #[arg(long, short)]
         cmd: String,
         /// Service working directory
         /// If not specified, the target directory of the executable (cmd arg) will be used
         #[arg(long)]
         working_dir: Option<String>,
         /// Name of the service to run
-        #[arg(long, short = 'n', default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
         name: String,
     },
 }
