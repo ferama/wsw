@@ -187,7 +187,7 @@ pub fn uninstall_service(name: &str) -> windows_service::Result<()> {
         ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::DELETE,
     )?;
 
-    service.stop()?;
+    let _ = service.stop().is_err(); // Ignore error if service is already stopped
     match wait_for_service_status(
         &name,
         ServiceState::Stopped,
