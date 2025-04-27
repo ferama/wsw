@@ -9,7 +9,10 @@ use std::{
     time::Duration,
 };
 use tracing::{error, info};
-use windows::{Win32::System::Services::*, core::PWSTR};
+use windows::{
+    Win32::System::Services::*,
+    core::{PCWSTR, PWSTR},
+};
 use windows_service::{
     service::{
         ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
@@ -227,6 +230,46 @@ pub fn get_service_status(name: &str) -> windows_service::Result<ServiceStatus> 
     // Query the service status
     let status = service.query_status()?;
     Ok(status)
+}
+
+pub fn get_service_command_line(name: &str) -> windows_service::Result<String> {
+    // Connect to the SCM
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
+
+    // Open the existing service
+    let service = manager.open_service(name, ServiceAccess::QUERY_CONFIG)?;
+
+    let service_handle = SC_HANDLE(service.raw_handle());
+    // Query the service info
+    unsafe {
+        // Query needed buffer size first
+        let mut needed = 0u32;
+        let result = QueryServiceConfigW(service_handle, None, 0, &mut needed);
+
+        if result.is_ok() {
+            return Err(windows_service::Error::Winapi(io::Error::new(
+                io::ErrorKind::Other,
+                "Unexpected result while querying service config",
+            )));
+        }
+
+        // Allocate buffer
+        let mut buffer = vec![0u8; needed as usize];
+        let config_ptr =
+            buffer.as_mut_ptr() as *mut windows::Win32::System::Services::QUERY_SERVICE_CONFIGW;
+
+        QueryServiceConfigW(service_handle, Some(config_ptr), needed, &mut needed).map_err(
+            |e| windows_service::Error::Winapi(std::io::Error::from_raw_os_error(e.code().0)),
+        )?;
+
+        let config = &*config_ptr;
+
+        let binary_path = PCWSTR(config.lpBinaryPathName.0)
+            .to_string()
+            .map_err(|e| windows_service::Error::Winapi(io::Error::new(io::ErrorKind::Other, e)))?;
+
+        Ok(binary_path)
+    }
 }
 
 pub fn wait_for_service_status(

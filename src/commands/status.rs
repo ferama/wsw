@@ -1,24 +1,41 @@
 use windows_service::service::ServiceState;
 
-use crate::pkg::service::{get_service_name, get_service_status};
+use crate::pkg::service::{get_service_command_line, get_service_name, get_service_status};
+use prettytable::{Table, row};
 
 pub fn handle(name: &str) {
     let svc_name = get_service_name(&name);
 
     match get_service_status(&svc_name) {
         Ok(status) => {
-            println!("==========================");
-            println!("Service: {}", &svc_name);
-            println!("Status: {:?}", status.current_state);
+            if let Ok(commandline) = get_service_command_line(&svc_name) {
+                println!("\n{}\n", commandline);
+            }
+            let mut table = Table::new();
+            table.add_row(row!["Service", &svc_name]);
+            table.add_row(row!["Status", format!("{:?}", status.current_state)]);
+
             match status.process_id {
-                Some(pid) => println!("PID: {}", pid),
-                None => println!("PID: Not running"),
+                Some(pid) => {
+                    table.add_row(prettytable::Row::new(vec![
+                        prettytable::Cell::new("PID"),
+                        prettytable::Cell::new(&pid.to_string()),
+                    ]));
+                }
+                None => {
+                    table.add_row(prettytable::Row::new(vec![
+                        prettytable::Cell::new("PID"),
+                        prettytable::Cell::new("Not running"),
+                    ]));
+                }
             }
+
             if status.current_state == ServiceState::Stopped {
-                println!("Exit Code: {:?}", status.exit_code);
+                table.add_row(row!["Exit Code", format!("{:?}", status.exit_code)]);
             } else {
-                println!("Exit Code: N/A");
+                table.add_row(row!["Exit Code", "N/A"]);
             }
+            table.printstd();
         }
         Err(e) => {
             eprintln!("Error getting service status: {}", e);
