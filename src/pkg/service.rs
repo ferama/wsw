@@ -1,5 +1,6 @@
 use clap::Parser;
 use std::{
+    io,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -247,8 +248,10 @@ pub fn wait_for_service_status(
         let start = std::time::Instant::now();
         if start.elapsed() > timeout {
             tracing::error!("Timeout waiting for service status to change");
-            // TODO: Handle timeout error
-            break;
+            return Err(windows_service::Error::Winapi(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "operation timed out",
+            )));
         }
         if status.current_state == target_state {
             break;
