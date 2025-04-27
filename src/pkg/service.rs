@@ -89,14 +89,14 @@ pub fn service_main(_args: Vec<OsString>) {
     let running_bg = Arc::clone(&running);
 
     while running_bg.load(Ordering::SeqCst) {
-        if let Ok(mut child) = run_command(&cmd_arg, working_dir_arg.clone()) {
-            info!("Child process started with PID: {}", child.1.id());
+        if let Ok(mut process) = run_command(&cmd_arg, working_dir_arg.clone()) {
+            info!("Child process started with PID: {}", process.1.id());
 
             // Poll for shutdown
             while running_bg.load(Ordering::SeqCst) {
                 thread::sleep(Duration::from_secs(1));
                 let exited = {
-                    match child.1.try_wait() {
+                    match process.1.try_wait() {
                         Ok(Some(status)) => {
                             error!("Child exited with status: {}", status);
                             true
@@ -113,9 +113,9 @@ pub fn service_main(_args: Vec<OsString>) {
                 }
             }
 
-            let _ = child.1.kill();
+            let _ = process.1.kill();
             unsafe {
-                if let Err(e) = CloseHandle(std::mem::transmute(child.0)) {
+                if let Err(e) = CloseHandle(std::mem::transmute(process.0)) {
                     error!("Failed to close handle: {:?}", e);
                 }
             }

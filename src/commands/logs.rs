@@ -5,8 +5,7 @@ use std::{
 };
 
 use crate::pkg::{
-    logs::{self, get_log_filename_prefix},
-    runner::SERVICE_LOG_PREFIX,
+    logs::{self, SERVICE_LOG_PREFIX, get_log_filename_prefix},
     service::get_service_name,
 };
 
