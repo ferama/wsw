@@ -11,12 +11,8 @@ fn main() {
     let cli = Cli::parse();
     // If parsing fails, clap will print the error and exit
     match cli.command {
-        Some(Commands::Logs { name, follow, full }) => {
-            commands::logs::handle(&name, follow, full);
-        }
-        Some(Commands::List) => {
-            commands::list::handle();
-        }
+        Some(Commands::Logs { name, follow, full }) => commands::logs::handle(&name, follow, full),
+        Some(Commands::List) => commands::list::handle(),
         Some(Commands::Start { name }) => commands::start::handle(&name),
         Some(Commands::Stop { name }) => commands::stop::handle(&name),
         Some(Commands::Status { name }) => commands::status::handle(&name),
@@ -25,19 +21,14 @@ fn main() {
             cmd,
             working_dir,
             name,
-        }) => {
-            commands::install::handle(&cmd, working_dir, &name);
-        }
-        Some(Commands::Uninstall { name }) => {
-            commands::uninstall::handle(&name);
-        }
+        }) => commands::install::handle(&cmd, working_dir, &name),
+
+        Some(Commands::Uninstall { name }) => commands::uninstall::handle(&name),
         Some(Commands::Run {
             cmd,
             working_dir,
             name,
-        }) => {
-            commands::run::handle(&cmd, working_dir, &name);
-        }
+        }) => commands::run::handle(&cmd, working_dir, &name),
         None => {
             let help = Cli::command().render_help();
             println!("{}", help.ansi());
