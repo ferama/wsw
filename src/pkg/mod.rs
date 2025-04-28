@@ -1,4 +1,4 @@
+pub mod log_writer;
 pub mod logs;
-pub mod logs_writer;
 pub mod runner;
 pub mod service;

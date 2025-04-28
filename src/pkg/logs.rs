@@ -9,7 +9,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::{Registry, layer::SubscriberExt};
 
-use crate::pkg::logs_writer::LocalTimer;
+use crate::pkg::log_writer::LocalTimer;
 
 pub const SERVICE_LOG_PREFIX: &str = "|SVC-LOG| ";
 

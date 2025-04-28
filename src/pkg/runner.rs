@@ -9,23 +9,15 @@ use std::{
 use tracing::info;
 use which::which;
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
     SetInformationJobObject,
 };
 
 use windows_sys::Win32::Foundation::{GetLastError, HANDLE};
-use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
-use windows_sys::core::PCWSTR;
 
-use crate::pkg::logs_writer::LogWriter;
+use crate::pkg::log_writer::LogWriter;
 
-unsafe extern "system" {
-    pub unsafe fn CreateJobObjectW(
-        lpJobAttributes: *const SECURITY_ATTRIBUTES,
-        lpName: PCWSTR,
-    ) -> HANDLE;
-}
 fn create_job_object() -> Result<HANDLE, std::io::Error> {
     unsafe {
         let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
