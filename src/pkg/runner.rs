@@ -57,24 +57,35 @@ fn create_job_object() -> Result<HANDLE, std::io::Error> {
     }
 }
 
-fn find_working_dir(exe: &str, working_dir: Option<String>) -> PathBuf {
+fn find_working_dir(cmdline: &str, working_dir: Option<String>) -> PathBuf {
     let mut cmd_working_dir: PathBuf = Path::new(".").to_path_buf();
+
+    // Check if the working directory is provided and not empty
     if let Some(dir) = working_dir {
         cmd_working_dir = PathBuf::from(dir);
-    } else {
-        if let Some(parent) = Path::new(exe).parent() {
-            cmd_working_dir = Path::new(parent).to_path_buf();
+        if cmd_working_dir != Path::new("") {
+            return cmd_working_dir;
         }
     }
 
-    if cmd_working_dir == Path::new("") {
-        match which(exe) {
-            Ok(path) => {
-                if let Some(parent) = path.parent() {
-                    cmd_working_dir = Path::new(parent).to_path_buf();
+    // Attempt to find the working directory from the command line
+    // Split the command line into parts and get the first part as the executable name
+    // TODO: the split_whitespace is not realiable, it will not work for all cases
+    let mut parts = cmdline.split_whitespace();
+    if let Some(exe) = parts.next() {
+        if let Some(parent) = Path::new(exe).parent() {
+            cmd_working_dir = Path::new(parent).to_path_buf();
+        }
+
+        if cmd_working_dir == Path::new("") {
+            match which(exe) {
+                Ok(path) => {
+                    if let Some(parent) = path.parent() {
+                        cmd_working_dir = Path::new(parent).to_path_buf();
+                    }
                 }
+                Err(_) => {}
             }
-            Err(_) => {}
         }
     }
 
@@ -85,79 +96,79 @@ pub fn run_command(
     cmdline: &str,
     working_dir: Option<String>,
 ) -> Result<(HANDLE, Child), std::io::Error> {
-    let mut parts = cmdline.split_whitespace();
-    if let Some(exe) = parts.next() {
-        let cmd_working_dir = find_working_dir(exe, working_dir);
-        info!("Command: {:?}", cmdline);
-        info!("Working directory: {:?}", cmd_working_dir);
+    // detect the more appropriate working directory for the command line
+    let cmd_working_dir = find_working_dir(cmdline, working_dir);
+    info!("Command: {:?}", cmdline);
+    info!("Working directory: {:?}", cmd_working_dir);
 
-        let job = create_job_object().unwrap();
+    // Create a Job Object
+    // The Job Object is used to manage the process and its children
+    // and to ensure that all processes are terminated when the Job Object is closed
+    // or when the process exits. Windows does not supports child processes
+    // that are not part of the Job Object. It's not like Linux where you can fork a child process
+    // and it will be a child of the parent process. In Windows, the child process is not a child of the parent process
+    // unless the parent process is a Job Object. So we need to create a Job Object and assign the process to it.
+    let job = create_job_object()?;
 
-        // let exe_args: Vec<&str> = parts.collect();
-        let command = Command::new("powershell.exe")
-            .arg("-Command")
-            .arg(cmdline)
-            // .args(&exe_args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .current_dir(cmd_working_dir)
-            .spawn()
-            .map(|mut child| {
-                if let Some(stdout) = child.stdout.take() {
-                    if let Some(stderr) = child.stderr.take() {
-                        let logger = LogWriter;
+    // Use the job handle to create a new process to ensure
+    // properly parsed command line arguments
+    let command = Command::new("powershell.exe")
+        .arg("-Command")
+        .arg(cmdline)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .current_dir(cmd_working_dir)
+        .spawn()
+        .map(|mut child| {
+            if let Some(stdout) = child.stdout.take() {
+                if let Some(stderr) = child.stderr.take() {
+                    let logger = LogWriter;
 
-                        let stdout = Arc::new(Mutex::new(stdout));
-                        let stderr = Arc::new(Mutex::new(stderr));
-                        let logger = Arc::new(Mutex::new(logger));
+                    let stdout = Arc::new(Mutex::new(stdout));
+                    let stderr = Arc::new(Mutex::new(stderr));
+                    let logger = Arc::new(Mutex::new(logger));
 
-                        let stdout_clone = Arc::clone(&stdout);
-                        let logger_clone = Arc::clone(&logger);
-                        thread::spawn(move || {
-                            let _ = std::io::copy(
-                                &mut *stdout_clone.lock().unwrap(),
-                                &mut *logger_clone.lock().unwrap(),
-                            );
-                        });
+                    let stdout_clone = Arc::clone(&stdout);
+                    let logger_clone = Arc::clone(&logger);
+                    thread::spawn(move || {
+                        let _ = std::io::copy(
+                            &mut *stdout_clone.lock().unwrap(),
+                            &mut *logger_clone.lock().unwrap(),
+                        );
+                    });
 
-                        let stderr_clone = Arc::clone(&stderr);
-                        let logger_clone = Arc::clone(&logger);
-                        thread::spawn(move || {
-                            let _ = std::io::copy(
-                                &mut *stderr_clone.lock().unwrap(),
-                                &mut *logger_clone.lock().unwrap(),
-                            );
-                        });
-                    }
-                }
-                child
-            });
-
-        if let Ok(child) = &command {
-            let process_handle = child.as_raw_handle();
-            info!("Process handle: {:?}", process_handle);
-            let assign_result = unsafe { AssignProcessToJobObject(job, process_handle) };
-            if assign_result == 0 {
-                unsafe {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        format!("Failed to assign process to Job Object: {}", GetLastError()),
-                    ));
+                    let stderr_clone = Arc::clone(&stderr);
+                    let logger_clone = Arc::clone(&logger);
+                    thread::spawn(move || {
+                        let _ = std::io::copy(
+                            &mut *stderr_clone.lock().unwrap(),
+                            &mut *logger_clone.lock().unwrap(),
+                        );
+                    });
                 }
             }
-        }
+            child
+        });
 
-        unsafe {
-            if let Ok(child) = command {
-                return Ok((std::mem::transmute(job), child));
-            } else {
-                return Err(command.unwrap_err());
+    if let Ok(child) = &command {
+        let process_handle = child.as_raw_handle();
+        let assign_result = unsafe { AssignProcessToJobObject(job, process_handle) };
+        if assign_result == 0 {
+            unsafe {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Failed to assign process to Job Object: {}", GetLastError()),
+                ));
             }
         }
     }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::NotFound,
-        format!("Command not found: {}", cmdline),
-    ))
+
+    unsafe {
+        if let Ok(child) = command {
+            return Ok((std::mem::transmute(job), child));
+        } else {
+            return Err(command.unwrap_err());
+        }
+    }
 }
