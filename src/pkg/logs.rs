@@ -1,4 +1,3 @@
-use chrono::Local;
 use tracing_appender::non_blocking::WorkerGuard;
 
 use std::env;
@@ -8,17 +7,11 @@ use tracing::info;
 use tracing_appender::rolling;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
-use tracing_subscriber::fmt::format::Writer;
-use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::{Registry, layer::SubscriberExt};
 
-struct LocalTimer;
+use crate::pkg::logs_writer::LocalTimer;
 
-impl FormatTime for LocalTimer {
-    fn format_time(&self, w: &mut Writer<'_>) -> std::fmt::Result {
-        write!(w, "{}", Local::now().format("%Y-%m-%d %H:%M:%S"))
-    }
-}
+pub const SERVICE_LOG_PREFIX: &str = "|SVC-LOG| ";
 
 pub fn get_log_dir() -> PathBuf {
     let log_path = match env::var("PROGRAMDATA") {
