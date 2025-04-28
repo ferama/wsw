@@ -1,3 +1,4 @@
+use regex::Regex;
 use windows_service::service::ServiceState;
 
 use crate::pkg::service::{get_service_command_line, get_service_name, get_service_status};
@@ -8,11 +9,8 @@ pub fn handle(name: &str) {
 
     match get_service_status(&svc_name) {
         Ok(status) => {
-            if let Ok(commandline) = get_service_command_line(&svc_name) {
-                println!("\n{}\n", commandline);
-            }
             let mut table = Table::new();
-            table.add_row(row!["Service", &svc_name]);
+            table.add_row(row!["Service Name", &svc_name]);
             table.add_row(row!["Status", format!("{:?}", status.current_state)]);
 
             match status.process_id {
@@ -30,11 +28,20 @@ pub fn handle(name: &str) {
                 }
             }
 
+            if let Ok(commandline) = get_service_command_line(&svc_name) {
+                let re = Regex::new(r#"--cmd\s+"([^"]+)""#).unwrap();
+                if let Some(caps) = re.captures(&commandline) {
+                    let cmd = &caps[1];
+                    table.add_row(row!["Cmdline", format!("{}", cmd)]);
+                }
+            }
+
             if status.current_state == ServiceState::Stopped {
                 table.add_row(row!["Exit Code", format!("{:?}", status.exit_code)]);
             } else {
                 table.add_row(row!["Exit Code", "N/A"]);
             }
+
             table.printstd();
         }
         Err(e) => {

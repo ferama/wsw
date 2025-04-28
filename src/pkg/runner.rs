@@ -1,3 +1,4 @@
+use regex::Regex;
 use std::io::{self};
 use std::os::windows::io::AsRawHandle;
 use std::{
@@ -62,10 +63,8 @@ fn find_working_dir(cmdline: &str, working_dir: Option<String>) -> PathBuf {
 
     // Attempt to find the working directory from the command line
     // Split the command line into parts and get the first part as the executable name
-    // TODO: the split_whitespace is not realiable, it will not work for all cases
-    let mut parts = cmdline.split_whitespace();
-    if let Some(exe) = parts.next() {
-        if let Some(parent) = Path::new(exe).parent() {
+    if let Some(exe) = extract_executable(cmdline) {
+        if let Some(parent) = Path::new(&exe).parent() {
             cmd_working_dir = Path::new(parent).to_path_buf();
         }
 
@@ -162,5 +161,78 @@ pub fn run_command(
         } else {
             return Err(command.unwrap_err());
         }
+    }
+}
+
+fn extract_executable(command: &str) -> Option<String> {
+    // Regex to capture quoted or unquoted executable paths at the beginning,
+    // and ensure we exclude arguments after the executable path.
+    let re = Regex::new(r#"^(?:"([^"]+)"|([^\s"]+))(?:\s|$)"#).unwrap();
+
+    re.captures(command).map(|caps| {
+        // Choose the matching capture group: either quoted (1) or unquoted (2)
+        caps.get(1)
+            .or_else(|| caps.get(2))
+            .unwrap()
+            .as_str()
+            .to_string()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_executable_with_quoted_path() {
+        let command = r#""C:\Program Files\SomeApp\app.exe" --arg1 --arg2"#;
+        let result = extract_executable(command);
+        assert_eq!(
+            result,
+            Some(String::from(r#"C:\Program Files\SomeApp\app.exe"#))
+        );
+    }
+
+    #[test]
+    fn test_extract_executable_with_unquoted_path() {
+        let command = r#"C:\SomeApp\app.exe --arg1 --arg2"#;
+        let result = extract_executable(command);
+        assert_eq!(result, Some(String::from(r#"C:\SomeApp\app.exe"#)));
+    }
+
+    #[test]
+    fn test_extract_executable_with_no_arguments() {
+        let command = r#"C:\SomeApp\app.exe"#;
+        let result = extract_executable(command);
+        assert_eq!(result, Some(String::from(r#"C:\SomeApp\app.exe"#)));
+    }
+
+    #[test]
+    fn test_extract_executable_with_empty_string() {
+        let command = r#""#;
+        let result = extract_executable(command);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_find_working_dir_with_provided_working_dir() {
+        let cmdline = r#"C:\SomeApp\app.exe --arg1"#;
+        let working_dir = Some(String::from(r#"C:\CustomDir"#));
+        let result = find_working_dir(cmdline, working_dir);
+        assert_eq!(result, PathBuf::from(r#"C:\CustomDir"#));
+    }
+
+    #[test]
+    fn test_find_working_dir_with_executable_path() {
+        let cmdline = r#"C:\SomeApp\app.exe --arg1"#;
+        let result = find_working_dir(cmdline, None);
+        assert_eq!(result, PathBuf::from(r#"C:\SomeApp"#));
+    }
+
+    #[test]
+    fn test_find_working_dir_with_empty_command() {
+        let cmdline = r#""#;
+        let result = find_working_dir(cmdline, None);
+        assert_eq!(result, PathBuf::from(r#"."#));
     }
 }

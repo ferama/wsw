@@ -1098,6 +1098,7 @@ dependencies = [
  "clap",
  "encoding_rs",
  "prettytable",
+ "regex",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
