@@ -86,6 +86,7 @@ fn find_working_dir(cmdline: &str, working_dir: Option<String>) -> PathBuf {
 pub fn run_command(
     cmdline: &str,
     working_dir: Option<String>,
+    disable_logs: bool,
 ) -> Result<(HANDLE, Child), std::io::Error> {
     // detect the more appropriate working directory for the command line
     let cmd_working_dir = find_working_dir(cmdline, working_dir);
@@ -112,6 +113,10 @@ pub fn run_command(
         .current_dir(cmd_working_dir)
         .spawn()
         .map(|mut child| {
+            if disable_logs {
+                return child;
+            }
+
             if let Some(stdout) = child.stdout.take() {
                 if let Some(stderr) = child.stderr.take() {
                     let logger = LogWriter;

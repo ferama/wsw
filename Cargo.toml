@@ -1,6 +1,6 @@
 [package]
 name = "wsw"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 authors = ["Marco Ferragina <marco.ferragina@gmail.com>"]
 readme = "README.md"
@@ -10,7 +10,7 @@ description = "A tiny, practical tool that lets any executable run as a real Win
 
 [dependencies]
 chrono = "0.4.40"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "wrap_help"] }
 prettytable = "0.10.0"
 tracing = "0.1.41"
 tracing-appender = "0.2.3"

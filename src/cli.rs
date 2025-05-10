@@ -73,6 +73,12 @@ pub enum Commands {
         /// Name of the service to install
         #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
         name: String,
+        /// If set to true, wrapped application logs will not be captured.
+        /// This means that following call to the "logs" subcommand will not
+        /// display any output regarding the wrapped app. This is useful in scenarios
+        /// where logs full managed from the wrapped application already.
+        #[arg(long, short, default_value_t = false)]
+        disable_logs: bool,
     },
     /// Stop and uninstall the Windows service
     #[command(visible_alias = "u")]
@@ -95,5 +101,11 @@ pub enum Commands {
         /// Name of the service to run
         #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
         name: String,
+        /// If set to true, wrapped application logs will not be captured.
+        /// This means that following call to the "logs" subcommand will not
+        /// display any output regarding the wrapped app. This is useful in scenarios
+        /// where logs full managed from the wrapped application already.
+        #[arg(long, short, default_value_t = false)]
+        disable_logs: bool,
     },
 }

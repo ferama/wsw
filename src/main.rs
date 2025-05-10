@@ -21,14 +21,16 @@ fn main() {
             cmd,
             working_dir,
             name,
-        }) => commands::install::handle(&cmd, working_dir, &name),
+            disable_logs,
+        }) => commands::install::handle(&cmd, working_dir, &name, disable_logs),
 
         Some(Commands::Uninstall { name }) => commands::uninstall::handle(&name),
         Some(Commands::Run {
             cmd,
             working_dir,
             name,
-        }) => commands::run::handle(&cmd, working_dir, &name),
+            disable_logs,
+        }) => commands::run::handle(&cmd, working_dir, &name, disable_logs),
         None => {
             let help = Cli::command().render_help();
             println!("{}", help.ansi());

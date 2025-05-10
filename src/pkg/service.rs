@@ -46,15 +46,19 @@ pub fn service_main(_args: Vec<OsString>) {
     let cmd_arg;
     let svc_name_arg;
     let working_dir_arg: Option<String>;
+    let no_logs: bool;
+
     match cli.command {
         Some(Commands::Run {
             cmd,
             working_dir,
             name,
+            disable_logs,
         }) => {
             cmd_arg = cmd.clone();
             svc_name_arg = get_service_name(name.as_str());
             working_dir_arg = working_dir;
+            no_logs = disable_logs;
         }
         _ => {
             panic!("Service main called without --cmd argument");
@@ -89,7 +93,7 @@ pub fn service_main(_args: Vec<OsString>) {
     let running_bg = Arc::clone(&running);
 
     while running_bg.load(Ordering::SeqCst) {
-        if let Ok(mut process) = run_command(&cmd_arg, working_dir_arg.clone()) {
+        if let Ok(mut process) = run_command(&cmd_arg, working_dir_arg.clone(), no_logs) {
             info!("Child process started with PID: {}", process.1.id());
 
             // Poll for shutdown
@@ -141,6 +145,7 @@ pub fn install_service(
     name: &str,
     working_dir: Option<String>,
     service_cmd: &str,
+    disable_logs: bool,
 ) -> windows_service::Result<()> {
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
@@ -158,6 +163,9 @@ pub fn install_service(
     if let Some(dir) = working_dir {
         launch_arguments.push(OsString::from("--working-dir"));
         launch_arguments.push(OsString::from(dir));
+    }
+    if disable_logs {
+        launch_arguments.push(OsString::from("--disable-logs"));
     }
 
     let service_info = ServiceInfo {
