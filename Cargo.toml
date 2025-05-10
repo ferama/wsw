@@ -9,7 +9,7 @@ license = "MIT"
 description = "A tiny, practical tool that lets any executable run as a real Windows service, with zero boilerplate."
 
 [dependencies]
-chrono = "0.4.40"
+chrono = "0.4.41"
 clap = { version = "4", features = ["derive", "wrap_help"] }
 prettytable = "0.10.0"
 tracing = "0.1.41"
