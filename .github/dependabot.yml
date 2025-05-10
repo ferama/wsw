@@ -1,0 +1,14 @@
+# .github/dependabot.yml
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/" # Location of Cargo.toml
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps"
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      # Check for updates to GitHub Actions every week
+      interval: "weekly"
