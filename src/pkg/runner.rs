@@ -4,7 +4,6 @@ use std::os::windows::io::AsRawHandle;
 use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
     thread,
 };
 use tracing::info;
@@ -116,33 +115,19 @@ pub fn run_command(
             if disable_logs {
                 return child;
             }
-            if let Some(stdout) = child.stdout.take() {
-                if let Some(stderr) = child.stderr.take() {
-                    let stdout_logger = LogWriter;
-                    let stderr_logger = LogWriter;
-
-                    let stdout = Arc::new(Mutex::new(stdout));
-                    let stderr = Arc::new(Mutex::new(stderr));
-
-                    let stdout_logger = Arc::new(Mutex::new(stdout_logger));
-                    let stdout_clone = Arc::clone(&stdout);
+            if let Some(mut stdout) = child.stdout.take() {
+                if let Some(mut stderr) = child.stderr.take() {
+                    let mut stdout_logger = LogWriter;
                     thread::spawn(move || {
-                        let _ = std::io::copy(
-                            &mut *stdout_clone.lock().unwrap(),
-                            &mut *stdout_logger.lock().unwrap(),
-                        );
+                        let _ = std::io::copy(&mut stdout, &mut stdout_logger);
                     });
 
-                    let stderr_clone = Arc::clone(&stderr);
-                    let stderr_logger =  Arc::new(Mutex::new(stderr_logger));
+                    let mut stderr_logger = LogWriter;
                     thread::spawn(move || {
-                        let _ = std::io::copy(
-                            &mut *stderr_clone.lock().unwrap(),
-                            &mut *stderr_logger.lock().unwrap(),
-                        );
+                        let _ = std::io::copy(&mut stderr, &mut stderr_logger);
                     });
                 } else {
-                     tracing::error!("can't get stderr");
+                    tracing::error!("can't get stderr");
                 }
             } else {
                 tracing::error!("can't get stdout");
