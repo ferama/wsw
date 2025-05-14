@@ -116,33 +116,36 @@ pub fn run_command(
             if disable_logs {
                 return child;
             }
-
             if let Some(stdout) = child.stdout.take() {
                 if let Some(stderr) = child.stderr.take() {
-                    let logger = LogWriter;
+                    let stdout_logger = LogWriter;
+                    let stderr_logger = LogWriter;
 
                     let stdout = Arc::new(Mutex::new(stdout));
                     let stderr = Arc::new(Mutex::new(stderr));
-                    let logger = Arc::new(Mutex::new(logger));
 
+                    let stdout_logger = Arc::new(Mutex::new(stdout_logger));
                     let stdout_clone = Arc::clone(&stdout);
-                    let logger_clone = Arc::clone(&logger);
                     thread::spawn(move || {
                         let _ = std::io::copy(
                             &mut *stdout_clone.lock().unwrap(),
-                            &mut *logger_clone.lock().unwrap(),
+                            &mut *stdout_logger.lock().unwrap(),
                         );
                     });
 
                     let stderr_clone = Arc::clone(&stderr);
-                    let logger_clone = Arc::clone(&logger);
+                    let stderr_logger =  Arc::new(Mutex::new(stderr_logger));
                     thread::spawn(move || {
                         let _ = std::io::copy(
                             &mut *stderr_clone.lock().unwrap(),
-                            &mut *logger_clone.lock().unwrap(),
+                            &mut *stderr_logger.lock().unwrap(),
                         );
                     });
+                } else {
+                     tracing::error!("can't get stderr");
                 }
+            } else {
+                tracing::error!("can't get stdout");
             }
             child
         });
