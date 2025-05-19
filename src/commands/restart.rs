@@ -1,9 +1,14 @@
 use windows_service::service::ServiceState;
 
-use crate::pkg::{
-    logs::setup_logging,
-    service::{get_service_name, start_service, stop_service, wait_for_service_status},
+use crate::{
+    commands::start::handle_start_error,
+    pkg::{
+        logs::setup_logging,
+        service::{get_service_name, start_service, stop_service, wait_for_service_status},
+    },
 };
+
+use super::stop::handle_stop_error;
 
 pub fn handle(name: &str) {
     let svc_name = get_service_name(&name);
@@ -22,9 +27,9 @@ pub fn handle(name: &str) {
             }
             match start_service(&svc_name) {
                 Ok(_) => tracing::info!("Service '{}' started successfully.", svc_name),
-                Err(e) => tracing::error!("Failed to start service '{}': {}", svc_name, e),
+                Err(e) => handle_start_error(e, name),
             }
         }
-        Err(e) => tracing::error!("Failed to stop service '{}': {}", svc_name, e),
+        Err(e) => handle_stop_error(e, name),
     }
 }
