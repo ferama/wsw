@@ -2,7 +2,9 @@ use regex::Regex;
 use windows_service::Error;
 use windows_service::service::ServiceState;
 
-use crate::pkg::service::{get_service_command_line, get_service_name, get_service_status};
+use crate::pkg::service::{
+    SERVICE_NAME_PREFIX, get_service_command_line, get_service_name, get_service_status,
+};
 use prettytable::{Table, row};
 use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SERVICE_DOES_NOT_EXIST};
 
@@ -12,7 +14,13 @@ pub fn handle(name: &str) {
     match get_service_status(&svc_name) {
         Ok(status) => {
             let mut table = Table::new();
-            table.add_row(row!["Service Name", &svc_name]);
+            let mut name = svc_name.to_string();
+            if name != SERVICE_NAME_PREFIX {
+                name = name[4..].to_string();
+            } else {
+                name = "[default]".to_string();
+            }
+            table.add_row(row!["Service Name", &name]);
             table.add_row(row!["Status", format!("{:?}", status.current_state)]);
 
             match status.process_id {

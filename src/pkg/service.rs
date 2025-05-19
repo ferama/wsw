@@ -336,21 +336,23 @@ pub fn stop_service(name: &str) -> windows_service::Result<()> {
     Ok(())
 }
 
-pub fn list_services_with_status() -> Vec<(String, String)> {
+pub fn list_services_with_status() -> windows_service::Result<Vec<(String, String)>> {
     let mut service_list = Vec::new();
 
     unsafe {
         let scm_handle_res = OpenSCManagerW(None, None, SC_MANAGER_ENUMERATE_SERVICE);
         if scm_handle_res.is_err() {
-            error!(
-                "Failed to open service control manager: {:?}",
-                scm_handle_res.err()
-            );
-            return service_list;
+            let win_err = scm_handle_res.unwrap_err();
+            let io_err = std::io::Error::from_raw_os_error(win_err.code().0);
+            return Err(windows_service::Error::Winapi(io_err));
         }
         let scm_handle = scm_handle_res.unwrap();
         if scm_handle.0.is_null() {
-            panic!("Failed to open service control manager");
+            return Err(windows_service::Error::Winapi(
+                std::io::Error::from_raw_os_error(
+                    windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED as i32,
+                ),
+            ));
         }
 
         let mut bytes_needed = 0u32;
@@ -409,7 +411,7 @@ pub fn list_services_with_status() -> Vec<(String, String)> {
 
         let _ = CloseServiceHandle(scm_handle);
     }
-    return service_list;
+    return Ok(service_list);
 }
 
 fn widestring_to_string(ptr: PWSTR) -> String {
