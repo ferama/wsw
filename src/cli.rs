@@ -1,6 +1,53 @@
+use std::str::FromStr;
+
 use clap::{Parser, Subcommand, command};
+use tracing_appender::rolling::Rotation;
 
 use crate::pkg::service::SERVICE_NAME_PREFIX;
+
+#[derive(Debug, Clone)]
+pub enum LogRotation {
+    Minutely,
+    Hourly,
+    Daily,
+    Never,
+}
+
+impl ToString for LogRotation {
+    fn to_string(&self) -> String {
+        match self {
+            LogRotation::Minutely => "minutely".to_string(),
+            LogRotation::Hourly => "hourly".to_string(),
+            LogRotation::Daily => "daily".to_string(),
+            LogRotation::Never => "never".to_string(),
+        }
+    }
+}
+
+impl FromStr for LogRotation {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "minutely" => Ok(LogRotation::Minutely),
+            "hourly" => Ok(LogRotation::Hourly),
+            "daily" => Ok(LogRotation::Daily),
+            "never" => Ok(LogRotation::Never),
+            _ => Err(format!("Invalid log rotation: {}", s)),
+        }
+    }
+}
+
+impl From<LogRotation> for Rotation {
+    fn from(lr: LogRotation) -> Self {
+        match lr {
+            LogRotation::Minutely => Rotation::MINUTELY,
+            LogRotation::Hourly => Rotation::HOURLY,
+            LogRotation::Daily => Rotation::DAILY,
+            LogRotation::Never => Rotation::NEVER,
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(
@@ -79,6 +126,19 @@ pub enum Commands {
         /// where logs full managed from the wrapped application already.
         #[arg(long, short, default_value_t = false)]
         disable_logs: bool,
+
+        /// Set the log rotation policy
+        /// * daily
+        /// * hourly
+        /// * minutely
+        /// * never
+        #[arg(long, short, default_value_t = LogRotation::Daily)]
+        log_rotation: LogRotation,
+
+        /// How many log files to keep
+        /// This is only used if the log rotation policy is set to something other than "never"
+        #[arg(long, short, default_value_t = 30)]
+        max_log_files: usize,
     },
     /// Stop and uninstall the Windows service
     #[command(visible_alias = "u")]
@@ -107,5 +167,17 @@ pub enum Commands {
         /// where logs full managed from the wrapped application already.
         #[arg(long, short, default_value_t = false)]
         disable_logs: bool,
+        /// Set the log rotation policy
+        /// * daily
+        /// * hourly
+        /// * minutely
+        /// * never
+        #[arg(long, short, default_value_t = LogRotation::Daily)]
+        log_rotation: LogRotation,
+
+        /// How many log files to keep
+        /// This is only used if the log rotation policy is set to something other than "never"
+        #[arg(long, short, default_value_t = 30)]
+        max_log_files: usize,
     },
 }

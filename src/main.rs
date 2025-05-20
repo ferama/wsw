@@ -22,7 +22,16 @@ fn main() {
             working_dir,
             name,
             disable_logs,
-        }) => commands::install::handle(&cmd, working_dir, &name, disable_logs),
+            log_rotation,
+            max_log_files,
+        }) => commands::install::handle(
+            &cmd,
+            working_dir,
+            &name,
+            disable_logs,
+            log_rotation,
+            max_log_files,
+        ),
 
         Some(Commands::Uninstall { name }) => commands::uninstall::handle(&name),
         Some(Commands::Run {
@@ -30,7 +39,16 @@ fn main() {
             working_dir,
             name,
             disable_logs,
-        }) => commands::run::handle(&cmd, working_dir, &name, disable_logs),
+            log_rotation,
+            max_log_files,
+        }) => commands::run::handle(
+            &cmd,
+            working_dir,
+            &name,
+            disable_logs,
+            log_rotation,
+            max_log_files,
+        ),
         None => {
             let help = Cli::command().render_help();
             println!("{}", help.ansi());

@@ -26,7 +26,7 @@ use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
 use std::ffi::OsString;
 
-use crate::cli::{Cli, Commands};
+use crate::cli::{Cli, Commands, LogRotation};
 
 use super::runner::run_command;
 
@@ -54,6 +54,8 @@ pub fn service_main(_args: Vec<OsString>) {
             working_dir,
             name,
             disable_logs,
+            log_rotation: _,
+            max_log_files: _,
         }) => {
             cmd_arg = cmd.clone();
             svc_name_arg = get_service_name(name.as_str());
@@ -146,6 +148,8 @@ pub fn install_service(
     working_dir: Option<String>,
     service_cmd: &str,
     disable_logs: bool,
+    log_rotation: LogRotation,
+    max_log_files: usize,
 ) -> windows_service::Result<()> {
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
@@ -158,6 +162,10 @@ pub fn install_service(
         OsString::from(service_cmd),
         OsString::from("--name"),
         OsString::from(name),
+        OsString::from("--log-rotation"),
+        OsString::from(log_rotation.to_string()),
+        OsString::from("--max-log-files"),
+        OsString::from(max_log_files.to_string()),
     ];
 
     if let Some(dir) = working_dir {

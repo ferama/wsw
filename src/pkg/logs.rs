@@ -9,6 +9,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::{Registry, layer::SubscriberExt};
 
+use crate::cli::LogRotation;
 use crate::pkg::log_writer::LocalTimer;
 
 pub const SERVICE_LOG_PREFIX: &str = "|SVC-LOG| ";
@@ -45,9 +46,15 @@ pub fn get_log_filename_prefix(name: &str) -> String {
     format!("{}.log", name)
 }
 
-pub fn setup_logging(name: &str) -> WorkerGuard {
+pub fn setup_logging(name: &str, log_rotation: LogRotation, max_log_files: usize) -> WorkerGuard {
     let log_path = get_log_dir();
-    let file_appender = rolling::daily(log_path.clone(), get_log_filename_prefix(name));
+
+    let file_appender = rolling::Builder::new()
+        .filename_prefix(get_log_filename_prefix(name))
+        .rotation(log_rotation.into())
+        .max_log_files(max_log_files)
+        .build(&log_path)
+        .unwrap();
     let (non_blocking_file, guard) = tracing_appender::non_blocking(file_appender); // Set up logging here if needed
 
     // Console layer (stderr by default, can also write to stdout)
