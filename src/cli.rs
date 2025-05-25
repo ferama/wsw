@@ -3,7 +3,7 @@ use std::str::FromStr;
 use clap::{Parser, Subcommand, command};
 use tracing_appender::rolling::Rotation;
 
-use crate::pkg::service::SERVICE_NAME_PREFIX;
+use crate::pkg::service::SERVICE_DESCRIPTION_PREFIX;
 
 #[derive(Debug, Clone)]
 pub enum LogRotation {
@@ -66,7 +66,7 @@ pub enum Commands {
     #[command()]
     Logs {
         /// Name of the service to show logs for
-        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        #[arg(long, short, default_value_t = String::from(SERVICE_DESCRIPTION_PREFIX))]
         name: String,
         /// Follow the log file and show new lines as they are added
         #[arg(long, short, default_value_t = false)]
@@ -83,28 +83,28 @@ pub enum Commands {
     #[command()]
     Start {
         /// Name of the service to start
-        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        #[arg(long, short, default_value_t = String::from(SERVICE_DESCRIPTION_PREFIX))]
         name: String,
     },
     /// Stop a service
     #[command()]
     Stop {
         /// Name of the service to start
-        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        #[arg(long, short, default_value_t = String::from(SERVICE_DESCRIPTION_PREFIX))]
         name: String,
     },
     /// Print a service status
     #[command()]
     Status {
         /// Name of the service to start
-        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        #[arg(long, short, default_value_t = String::from(SERVICE_DESCRIPTION_PREFIX))]
         name: String,
     },
     /// Restart a service
     #[command()]
     Restart {
         /// Name of the service to start
-        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        #[arg(long, short, default_value_t = String::from(SERVICE_DESCRIPTION_PREFIX))]
         name: String,
     },
     /// Install and start the Windows service
@@ -118,7 +118,7 @@ pub enum Commands {
         #[arg(long)]
         working_dir: Option<String>,
         /// Name of the service to install
-        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        #[arg(long, short, default_value_t = String::from(SERVICE_DESCRIPTION_PREFIX))]
         name: String,
         /// If set to true, wrapped application logs will not be captured.
         /// This means that following call to the "logs" subcommand will not
@@ -144,7 +144,7 @@ pub enum Commands {
     #[command(visible_alias = "u")]
     Uninstall {
         /// Name of the service to uninstall
-        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        #[arg(long, short, default_value_t = String::from(SERVICE_DESCRIPTION_PREFIX))]
         name: String,
     },
     /// Run in service mode (called by the system or for debugging)
@@ -159,7 +159,7 @@ pub enum Commands {
         #[arg(long)]
         working_dir: Option<String>,
         /// Name of the service to run
-        #[arg(long, short, default_value_t = String::from(SERVICE_NAME_PREFIX))]
+        #[arg(long, short, default_value_t = String::from(SERVICE_DESCRIPTION_PREFIX))]
         name: String,
         /// If set to true, wrapped application logs will not be captured.
         /// This means that following call to the "logs" subcommand will not

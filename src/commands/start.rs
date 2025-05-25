@@ -1,6 +1,6 @@
 use windows_service::service::ServiceState;
 
-use crate::pkg::service::{get_service_name, start_service, wait_for_service_status};
+use crate::pkg::service::{start_service, wait_for_service_status};
 use windows_service::Error;
 use windows_sys::Win32::Foundation::{
     ERROR_ACCESS_DENIED, ERROR_SERVICE_ALREADY_RUNNING, ERROR_SERVICE_DOES_NOT_EXIST,
@@ -29,17 +29,15 @@ pub fn handle_start_error(e: Error, name: &str) {
 }
 
 pub fn handle(name: &str) {
-    let svc_name = get_service_name(&name);
-
-    match start_service(&svc_name) {
+    match start_service(&name) {
         Ok(_) => {
             match wait_for_service_status(
-                &svc_name,
+                &name,
                 ServiceState::Running,
                 std::time::Duration::from_secs(10),
             ) {
-                Ok(_) => println!("Service '{}' is now running.", svc_name),
-                Err(e) => eprintln!("Failed to wait for service '{}': {}", svc_name, e),
+                Ok(_) => println!("Service '{}' is now running.", name),
+                Err(e) => eprintln!("Failed to wait for service '{}': {}", name, e),
             }
         }
         Err(e) => handle_start_error(e, name),

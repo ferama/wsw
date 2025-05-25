@@ -31,13 +31,13 @@ use crate::cli::{Cli, Commands, LogRotation};
 use super::runner::run_command;
 
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
-pub const SERVICE_NAME_PREFIX: &str = "wsw";
+pub const SERVICE_DESCRIPTION_PREFIX: &str = "wsw";
 
-pub fn get_service_name(name: &str) -> String {
-    if name == SERVICE_NAME_PREFIX {
-        SERVICE_NAME_PREFIX.to_string()
+pub fn get_service_desc(name: &str) -> String {
+    if name == SERVICE_DESCRIPTION_PREFIX {
+        SERVICE_DESCRIPTION_PREFIX.to_string()
     } else {
-        format!("{}-{}", SERVICE_NAME_PREFIX, name)
+        format!("{}-{}", SERVICE_DESCRIPTION_PREFIX, name)
     }
 }
 
@@ -58,7 +58,7 @@ pub fn service_main(_args: Vec<OsString>) {
             max_log_files: _,
         }) => {
             cmd_arg = cmd.clone();
-            svc_name_arg = get_service_name(name.as_str());
+            svc_name_arg = name;
             working_dir_arg = working_dir;
             no_logs = disable_logs;
         }
@@ -178,7 +178,7 @@ pub fn install_service(
 
     let service_info = ServiceInfo {
         name: OsString::from(name),
-        display_name: OsString::from("Windows Service Wrapper"),
+        display_name: OsString::from(get_service_desc(name)),
         service_type: SERVICE_TYPE,
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
@@ -400,9 +400,9 @@ pub fn list_services_with_status() -> windows_service::Result<Vec<(String, Strin
         );
 
         for svc in services {
-            let name = widestring_to_string(svc.lpServiceName);
+            let name = widestring_to_string(svc.lpDisplayName);
             // info!("Service Name: {}", name);
-            if name.starts_with(SERVICE_NAME_PREFIX) {
+            if name.starts_with(SERVICE_DESCRIPTION_PREFIX) {
                 let status = match svc.ServiceStatusProcess.dwCurrentState {
                     SERVICE_RUNNING => "Running".to_string(),
                     SERVICE_STOPPED => "Stopped".to_string(),

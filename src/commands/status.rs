@@ -2,24 +2,15 @@ use regex::Regex;
 use windows_service::Error;
 use windows_service::service::ServiceState;
 
-use crate::pkg::service::{
-    SERVICE_NAME_PREFIX, get_service_command_line, get_service_name, get_service_status,
-};
+use crate::pkg::service::{get_service_command_line, get_service_status};
 use prettytable::{Table, row};
 use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SERVICE_DOES_NOT_EXIST};
 
 pub fn handle(name: &str) {
-    let svc_name = get_service_name(&name);
-
-    match get_service_status(&svc_name) {
+    match get_service_status(&name) {
         Ok(status) => {
             let mut table = Table::new();
-            let mut name = svc_name.to_string();
-            if name != SERVICE_NAME_PREFIX {
-                name = name[4..].to_string();
-            } else {
-                name = "[default]".to_string();
-            }
+
             table.add_row(row!["Service Name", &name]);
             table.add_row(row!["Status", format!("{:?}", status.current_state)]);
 
@@ -38,7 +29,7 @@ pub fn handle(name: &str) {
                 }
             }
 
-            if let Ok(commandline) = get_service_command_line(&svc_name) {
+            if let Ok(commandline) = get_service_command_line(&name) {
                 let re = Regex::new(r#"--cmd\s+"([^"]+)""#).unwrap();
                 if let Some(caps) = re.captures(&commandline) {
                     let cmd = &caps[1];
@@ -56,17 +47,17 @@ pub fn handle(name: &str) {
         }
         Err(Error::Winapi(e)) => match e.raw_os_error() {
             Some(code) if code as u32 == ERROR_SERVICE_DOES_NOT_EXIST => {
-                eprintln!("Service '{}' is not installed.", svc_name);
+                eprintln!("Service '{}' is not installed.", name);
             }
             Some(code) if code as u32 == ERROR_ACCESS_DENIED => {
                 eprintln!("Access denied — run as Administrator or add the privilege.");
             }
             _ => {
-                eprintln!("Failed to get service status '{}': {:?}", svc_name, e);
+                eprintln!("Failed to get service status '{}': {:?}", name, e);
             }
         },
         Err(e) => {
-            eprintln!("Failed to get service status '{}': {:?}", svc_name, e);
+            eprintln!("Failed to get service status '{}': {:?}", name, e);
         }
     }
 }

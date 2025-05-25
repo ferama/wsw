@@ -4,14 +4,9 @@ use std::{
     path::PathBuf,
 };
 
-use crate::pkg::{
-    logs::{self, SERVICE_LOG_PREFIX, get_log_filename_prefix},
-    service::get_service_name,
-};
+use crate::pkg::logs::{self, SERVICE_LOG_PREFIX, get_log_filename_prefix};
 
 pub fn handle(name: &str, follow: bool, full: bool) {
-    let svc_name = get_service_name(&name);
-
     let log_dir = logs::get_log_dir();
     let res = fs::read_dir(log_dir.clone());
     match res {
@@ -24,7 +19,7 @@ pub fn handle(name: &str, follow: bool, full: bool) {
                         && path
                             .file_name()
                             .and_then(|f| f.to_str())
-                            .map(|f| f.starts_with(get_log_filename_prefix(&svc_name).as_str()))
+                            .map(|f| f.starts_with(get_log_filename_prefix(&name).as_str()))
                             .unwrap_or(false)
                 })
                 .collect();

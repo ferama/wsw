@@ -1,6 +1,6 @@
 use prettytable::{Table, row};
 
-use crate::pkg::service::{SERVICE_NAME_PREFIX, list_services_with_status};
+use crate::pkg::service::list_services_with_status;
 use windows_service::Error;
 use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
 
@@ -14,12 +14,7 @@ pub fn handle() {
                 table.add_row(row!["Service Name", "Status"]);
 
                 for service in services {
-                    let mut name = service.0.to_string();
-                    if name != SERVICE_NAME_PREFIX {
-                        name = name[4..].to_string();
-                    } else {
-                        name = "[default]".to_string();
-                    }
+                    let name = service.0.to_string();
                     table.add_row(row![name, service.1]);
                 }
 
