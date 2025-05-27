@@ -400,9 +400,9 @@ pub fn list_services_with_status() -> windows_service::Result<Vec<(String, Strin
         );
 
         for svc in services {
-            let name = widestring_to_string(svc.lpDisplayName);
-            // info!("Service Name: {}", name);
-            if name.starts_with(SERVICE_DESCRIPTION_PREFIX) {
+            let name = widestring_to_string(svc.lpServiceName);
+            let display_name = widestring_to_string(svc.lpDisplayName);
+            if display_name.starts_with(SERVICE_DESCRIPTION_PREFIX) {
                 let status = match svc.ServiceStatusProcess.dwCurrentState {
                     SERVICE_RUNNING => "Running".to_string(),
                     SERVICE_STOPPED => "Stopped".to_string(),

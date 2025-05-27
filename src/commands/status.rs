@@ -1,4 +1,3 @@
-use regex::Regex;
 use windows_service::Error;
 use windows_service::service::ServiceState;
 
@@ -30,11 +29,7 @@ pub fn handle(name: &str) {
             }
 
             if let Ok(commandline) = get_service_command_line(&name) {
-                let re = Regex::new(r#"--cmd\s+"([^"]+)""#).unwrap();
-                if let Some(caps) = re.captures(&commandline) {
-                    let cmd = &caps[1];
-                    table.add_row(row!["Cmdline", format!("{}", cmd)]);
-                }
+                table.add_row(row!["FullCmd", format!("{}", commandline)]);
             }
 
             if status.current_state == ServiceState::Stopped {
