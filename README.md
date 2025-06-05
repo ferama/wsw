@@ -45,7 +45,7 @@ wsw.exe install --name myapp --cmd "C:\MyApp\app.exe --arg1 --arg2"
 ```
 
 This will:
-- Install `wsw.exe` as a Windows service named `wsw-myapp`  
+- Install `wsw.exe` as a Windows service named `myapp`  
 - Configure it to launch `app.exe --arg1 --arg2`  
 - Automatically start it  
 
