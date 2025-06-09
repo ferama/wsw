@@ -15,7 +15,7 @@ prettytable = "0.10.0"
 tracing = "0.1.41"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-which = "7.0.3"
+which = "8.0.0"
 windows = { version = "0.61", features = [
     "Win32_System_Services",
 ] }
