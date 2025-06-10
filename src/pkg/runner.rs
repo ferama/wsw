@@ -103,8 +103,8 @@ pub fn run_command(
 
     // Use the job handle to create a new process to ensure
     // properly parsed command line arguments
-    let command = Command::new("powershell.exe")
-        .arg("-Command")
+    let command = Command::new("cmd.exe")
+        .arg("/C")
         .arg(cmdline)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -220,6 +220,13 @@ mod tests {
         let cmdline = r#"C:\SomeApp\app.exe --arg1"#;
         let result = find_working_dir(cmdline, None);
         assert_eq!(result, PathBuf::from(r#"C:\SomeApp"#));
+    }
+
+    #[test]
+    fn test_find_working_dir_with_spaces() {
+        let cmdline = r#"C:\Program Files\app.exe --arg1"#;
+        let result = find_working_dir(cmdline, None);
+        assert_eq!(result, PathBuf::from(r#"C:\Program Files"#));
     }
 
     #[test]
