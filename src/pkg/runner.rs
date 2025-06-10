@@ -158,9 +158,10 @@ pub fn run_command(
 }
 
 fn extract_executable(command: &str) -> Option<String> {
-    // Regex to capture quoted or unquoted executable paths at the beginning,
-    // and ensure we exclude arguments after the executable path.
-    let re = Regex::new(r#"^(?:"([^"]+)"|([^\s"]+))(?:\s|$)"#).unwrap();
+    // Regex to capture quoted or unquoted executable paths at the beginning.
+    // For unquoted paths, we look for patterns ending with .exe (common executable extension)
+    // followed by a space and arguments, or end of string.
+    let re = Regex::new(r#"^(?:"([^"]+)"|([^"]*\.exe))(?:\s|$)"#).unwrap();
 
     re.captures(command).map(|caps| {
         // Choose the matching capture group: either quoted (1) or unquoted (2)
@@ -201,6 +202,13 @@ mod tests {
     }
 
     #[test]
+    fn test_executable_with_spaces() {
+        let cmdline = r#"C:\Program Files\app.exe --arg1"#;
+        let result = extract_executable(cmdline);
+        assert_eq!(result, Some(String::from(r#"C:\Program Files\app.exe"#)));
+    }
+
+    #[test]
     fn test_extract_executable_with_empty_string() {
         let command = r#""#;
         let result = extract_executable(command);
@@ -220,13 +228,6 @@ mod tests {
         let cmdline = r#"C:\SomeApp\app.exe --arg1"#;
         let result = find_working_dir(cmdline, None);
         assert_eq!(result, PathBuf::from(r#"C:\SomeApp"#));
-    }
-
-    #[test]
-    fn test_find_working_dir_with_spaces() {
-        let cmdline = r#"C:\Program Files\app.exe --arg1"#;
-        let result = find_working_dir(cmdline, None);
-        assert_eq!(result, PathBuf::from(r#"C:\Program Files"#));
     }
 
     #[test]
