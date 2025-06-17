@@ -24,6 +24,8 @@ fn main() {
             disable_logs,
             log_rotation,
             max_log_files,
+            account_name,
+            account_password
         }) => commands::install::handle(
             &cmd,
             working_dir,
@@ -31,6 +33,8 @@ fn main() {
             disable_logs,
             log_rotation,
             max_log_files,
+            account_name,
+            account_password
         ),
 
         Some(Commands::Uninstall { name }) => commands::uninstall::handle(&name),

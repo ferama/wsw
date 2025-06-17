@@ -1,6 +1,6 @@
 [package]
 name = "wsw"
-version = "0.8.1"
+version = "0.9.0"
 edition = "2024"
 authors = ["Marco Ferragina <marco.ferragina@gmail.com>"]
 readme = "README.md"

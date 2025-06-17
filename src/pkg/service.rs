@@ -150,6 +150,8 @@ pub fn install_service(
     disable_logs: bool,
     log_rotation: LogRotation,
     max_log_files: usize,
+    account_name: Option<String>,
+    account_password: Option<String>
 ) -> windows_service::Result<()> {
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
@@ -176,6 +178,16 @@ pub fn install_service(
         launch_arguments.push(OsString::from("--disable-logs"));
     }
 
+    let an = match account_name {
+        Some(name) => Some(OsString::from(name)),
+        None => None
+    };
+
+    let ap = match account_password {
+        Some(password) => Some(OsString::from(password)),
+        None => None
+    };
+
     let service_info = ServiceInfo {
         name: OsString::from(name),
         display_name: OsString::from(get_service_desc(name)),
@@ -185,8 +197,8 @@ pub fn install_service(
         executable_path: executable_path.into(),
         launch_arguments,
         dependencies: vec![],
-        account_name: None,
-        account_password: None,
+        account_name: an,
+        account_password: ap,
     };
 
     let service = service_manager.create_service(&service_info, ServiceAccess::START)?;

@@ -139,6 +139,15 @@ pub enum Commands {
         /// This is only used if the log rotation policy is set to something other than "never"
         #[arg(long, short, default_value_t = 30)]
         max_log_files: usize,
+
+        /// Run the service using specified account_name.
+        /// If the user is local put it in the format .\username
+        #[arg(long, requires = "account_password")]
+        account_name: Option<String>,
+
+        /// Run the service using specified account_password
+        #[arg(long, requires = "account_name")]
+        account_password: Option<String>
     },
     /// Stop and uninstall the Windows service
     #[command(visible_alias = "u")]

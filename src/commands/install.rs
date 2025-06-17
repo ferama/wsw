@@ -9,6 +9,8 @@ pub fn handle(
     disable_logs: bool,
     log_rotation: LogRotation,
     max_log_files: usize,
+    account_name: Option<String>,
+    account_password: Option<String>
 ) {
     match install_service(
         &name,
@@ -17,6 +19,8 @@ pub fn handle(
         disable_logs,
         log_rotation,
         max_log_files,
+        account_name,
+        account_password
     ) {
         Ok(_) => println!("Service '{}' installed successfully.", name),
         Err(Error::Winapi(e)) => match e.raw_os_error() {
