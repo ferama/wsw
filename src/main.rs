@@ -54,8 +54,7 @@ fn main() {
             max_log_files,
         ),
         None => {
-            let help = Cli::command().render_help();
-            println!("{}", help.ansi());
+            Cli::command().print_help().unwrap();
             std::process::exit(0);
         }
     }
