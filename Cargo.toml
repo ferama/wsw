@@ -16,7 +16,7 @@ tracing = "0.1.41"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 which = "8.0.0"
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
     "Win32_System_Services",
 ] }
 windows-sys = { version = "0.60", features = [
