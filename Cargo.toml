@@ -12,7 +12,7 @@ description = "A tiny, practical tool that lets any executable run as a real Win
 chrono = "0.4.42"
 clap = { version = "4", features = ["derive", "wrap_help"] }
 prettytable = "0.10.0"
-tracing = "0.1.41"
+tracing = "0.1.43"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 which = "8.0.0"
