@@ -59,7 +59,7 @@ jobs:
             -DestinationPath "target/${{ matrix.target }}/release/wsw-${{ matrix.arch_name }}.zip"
       
       - name: Upload built binaries
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: wsw-${{ matrix.arch_name }}
           path: |
