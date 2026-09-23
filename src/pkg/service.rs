@@ -95,37 +95,43 @@ pub fn service_main(_args: Vec<OsString>) {
     let running_bg = Arc::clone(&running);
 
     while running_bg.load(Ordering::SeqCst) {
-        if let Ok(mut process) = run_command(&cmd_arg, working_dir_arg.clone(), no_logs) {
-            info!("Child process started with PID: {}", process.1.id());
+        match run_command(&cmd_arg, working_dir_arg.clone(), no_logs) {
+            Err(e) => {
+                error!("Failed to start command: {}", e);
+                thread::sleep(Duration::from_secs(5));
+            }
+            Ok(mut process) => {
+                info!("Child process started with PID: {}", process.1.id());
 
-            // Poll for shutdown
-            while running_bg.load(Ordering::SeqCst) {
-                thread::sleep(Duration::from_secs(1));
-                let exited = {
-                    match process.1.try_wait() {
-                        Ok(Some(status)) => {
-                            error!("Child exited with status: {}", status);
-                            true
+                // Poll for shutdown
+                while running_bg.load(Ordering::SeqCst) {
+                    thread::sleep(Duration::from_secs(1));
+                    let exited = {
+                        match process.1.try_wait() {
+                            Ok(Some(status)) => {
+                                error!("Child exited with status: {}", status);
+                                true
+                            }
+                            Ok(None) => false,
+                            Err(e) => {
+                                info!("Failed to check child status: {}", e);
+                                true
+                            }
                         }
-                        Ok(None) => false,
-                        Err(e) => {
-                            info!("Failed to check child status: {}", e);
-                            true
-                        }
+                    };
+                    if exited {
+                        break;
                     }
-                };
-                if exited {
-                    break;
                 }
-            }
 
-            let _ = process.1.kill();
-            unsafe {
-                if let Err(e) = CloseHandle(std::mem::transmute(process.0)) {
-                    error!("Failed to close handle: {:?}", e);
+                let _ = process.1.kill();
+                unsafe {
+                    if let Err(e) = CloseHandle(std::mem::transmute(process.0)) {
+                        error!("Failed to close handle: {:?}", e);
+                    }
                 }
+                thread::sleep(Duration::from_secs(1));
             }
-            thread::sleep(Duration::from_secs(1));
         }
     }
 

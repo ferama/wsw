@@ -14,7 +14,7 @@ use windows_sys::Win32::System::JobObjects::{
     SetInformationJobObject,
 };
 
-use windows_sys::Win32::Foundation::{GetLastError, HANDLE};
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE};
 
 use crate::pkg::log_writer::LogWriter;
 
@@ -140,10 +140,12 @@ pub fn run_command(
         let assign_result = unsafe { AssignProcessToJobObject(job, process_handle) };
         if assign_result == 0 {
             unsafe {
-                return Err(io::Error::new(
+                let err = io::Error::new(
                     io::ErrorKind::Other,
                     format!("Failed to assign process to Job Object: {}", GetLastError()),
-                ));
+                );
+                CloseHandle(job);
+                return Err(err);
             }
         }
     }
@@ -152,6 +154,7 @@ pub fn run_command(
         if let Ok(child) = command {
             return Ok((std::mem::transmute(job), child));
         } else {
+            CloseHandle(job);
             return Err(command.unwrap_err());
         }
     }
