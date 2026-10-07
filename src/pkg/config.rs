@@ -92,6 +92,16 @@ pub struct ServiceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
+    /// Display name of the service [default: wsw-<name>]
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+
+    /// Description of the service, shown by the Services console
+    #[arg(long)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
     /// Command line to run as a service, executed through 'cmd.exe /C'.
     /// Prefer --exe: it avoids the cmd.exe quoting rules, allows a graceful
     /// stop and reports the real exit code of the process
@@ -284,6 +294,8 @@ impl ServiceConfig {
         }
         merge_fields!(base, over;
             name,
+            display_name,
+            description,
             cmd,
             exe,
             args,
@@ -320,6 +332,8 @@ impl ServiceConfig {
     /// that they cannot get out of sync.
     pub fn runtime(&self) -> ServiceConfig {
         ServiceConfig {
+            display_name: None,
+            description: None,
             start_type: None,
             depends_on: None,
             scm_failure_actions: None,
@@ -406,6 +420,16 @@ fn non_empty(list: Option<Vec<String>>) -> Vec<String> {
         .collect()
 }
 
+/// Display name of services installed without --display-name. The `wsw`
+/// prefix is also how services installed by older versions are recognized.
+pub fn default_display_name(name: &str) -> String {
+    if name == SERVICE_DESCRIPTION_PREFIX {
+        SERVICE_DESCRIPTION_PREFIX.to_string()
+    } else {
+        format!("{}-{}", SERVICE_DESCRIPTION_PREFIX, name)
+    }
+}
+
 impl ServiceConfig {
     /// Validates the options stored by the SCM and applies the defaults.
     pub fn scm(&self) -> Result<ScmSettings, String> {
@@ -427,7 +451,14 @@ impl ServiceConfig {
             None => None,
         };
 
+        let display_name = match &self.display_name {
+            Some(display_name) if !display_name.trim().is_empty() => display_name.clone(),
+            _ => default_display_name(&self.service_name()),
+        };
+
         Ok(ScmSettings {
+            display_name,
+            description: self.description.clone(),
             failure_actions,
             failure_reset: Duration::from_secs(
                 self.scm_failure_reset.unwrap_or(DEFAULT_SCM_FAILURE_RESET),
@@ -447,6 +478,9 @@ impl ServiceConfig {
 /// Options stored by the SCM, validated.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScmSettings {
+    pub display_name: String,
+    /// None to leave the description untouched
+    pub description: Option<String>,
     /// None to leave the recovery actions untouched, empty to clear them
     pub failure_actions: Option<Vec<ScmAction>>,
     pub failure_reset: Duration,
@@ -730,6 +764,28 @@ mod tests {
     }
 
     #[test]
+    fn display_name_and_description() {
+        let config = parse_run(&["--name", "Redmine"]);
+        assert_eq!(config.scm().unwrap().display_name, "wsw-Redmine");
+
+        let config = parse_run(&[
+            "--name",
+            "Redmine",
+            "--display-name",
+            "Redmine (Puma)",
+            "--description",
+            "Redmine project management",
+        ]);
+        let scm = config.scm().unwrap();
+        assert_eq!(scm.display_name, "Redmine (Puma)");
+        assert_eq!(
+            scm.description.as_deref(),
+            Some("Redmine project management")
+        );
+        assert_eq!(config.runtime().display_name, None);
+    }
+
+    #[test]
     fn a_command_is_required() {
         assert!(parse_run(&["--name", "x"]).resolve().is_err());
     }
@@ -829,6 +885,8 @@ mod tests {
             ..Default::default()
         };
         let scm = config.scm().unwrap();
+        assert_eq!(scm.display_name, "wsw");
+        assert_eq!(scm.description, None);
         assert_eq!(scm.start_type, StartType::Auto);
         assert_eq!(scm.depends_on, vec!["RedminePostgreSQL"]);
         assert_eq!(

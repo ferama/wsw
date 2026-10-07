@@ -34,14 +34,6 @@ use windows_sys::Win32::Foundation::ERROR_BAD_CONFIGURATION;
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 pub use super::SERVICE_DESCRIPTION_PREFIX;
 
-pub fn get_service_desc(name: &str) -> String {
-    if name == SERVICE_DESCRIPTION_PREFIX {
-        SERVICE_DESCRIPTION_PREFIX.to_string()
-    } else {
-        format!("{}-{}", SERVICE_DESCRIPTION_PREFIX, name)
-    }
-}
-
 /// Configuration of the service process. It is resolved by the `run`
 /// command before the service dispatcher is started, so that `service_main`
 /// never has to parse it again. An invalid configuration is kept as an error
@@ -219,7 +211,7 @@ pub fn install_service(config: &ServiceConfig, scm: &ScmSettings) -> windows_ser
 
     let service_info = ServiceInfo {
         name: OsString::from(&name),
-        display_name: OsString::from(get_service_desc(&name)),
+        display_name: OsString::from(&scm.display_name),
         service_type: SERVICE_TYPE,
         start_type: scm_start_type(scm.start_type),
         error_control: ServiceErrorControl::Normal,
@@ -266,6 +258,9 @@ fn scm_start_type(start_type: StartType) -> ServiceStartType {
 fn configure_service(service: &Service, scm: &ScmSettings) -> windows_service::Result<()> {
     service.set_delayed_auto_start(scm.start_type == StartType::DelayedAuto)?;
     service.set_preshutdown_timeout(scm.preshutdown_timeout)?;
+    if let Some(description) = &scm.description {
+        service.set_description(description)?;
+    }
 
     if let Some(actions) = &scm.failure_actions {
         let actions: Vec<ServiceAction> = actions
