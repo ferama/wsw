@@ -96,7 +96,9 @@ impl StatusReporter {
         self.checkpoint = 0;
         self.set(
             ServiceState::Running,
-            ServiceControlAccept::STOP,
+            ServiceControlAccept::STOP
+                | ServiceControlAccept::SHUTDOWN
+                | ServiceControlAccept::PRESHUTDOWN,
             ServiceExitCode::Win32(0),
             Duration::default(),
         );
