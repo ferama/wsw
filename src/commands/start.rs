@@ -6,7 +6,9 @@ use windows_sys::Win32::Foundation::{
     ERROR_ACCESS_DENIED, ERROR_SERVICE_ALREADY_RUNNING, ERROR_SERVICE_DOES_NOT_EXIST,
 };
 
-pub fn handle_start_error(e: Error, name: &str) {
+/// Reports a start error. Returns true if it is harmless (the service is
+/// already running), false if the command failed.
+pub fn handle_start_error(e: Error, name: &str) -> bool {
     match e {
         Error::Winapi(ref winapi_err) => match winapi_err.raw_os_error() {
             Some(code) if code as u32 == ERROR_SERVICE_DOES_NOT_EXIST => {
@@ -16,7 +18,8 @@ pub fn handle_start_error(e: Error, name: &str) {
                 eprintln!("Access denied — run as Administrator or add the privilege.");
             }
             Some(code) if code as u32 == ERROR_SERVICE_ALREADY_RUNNING => {
-                eprintln!("Service '{name}' is alredy running.");
+                eprintln!("Service '{name}' is already running.");
+                return true;
             }
             _ => {
                 eprintln!("Failed to start service '{}': {:?}", name, e);
@@ -26,6 +29,7 @@ pub fn handle_start_error(e: Error, name: &str) {
             eprintln!("Failed to start service '{}': {:?}", name, e);
         }
     }
+    false
 }
 
 pub fn handle(name: &str) {
@@ -37,9 +41,16 @@ pub fn handle(name: &str) {
                 std::time::Duration::from_secs(10),
             ) {
                 Ok(_) => println!("Service '{}' is now running.", name),
-                Err(e) => eprintln!("Failed to wait for service '{}': {}", name, e),
+                Err(e) => {
+                    eprintln!("Failed to wait for service '{}': {}", name, e);
+                    std::process::exit(1);
+                }
             }
         }
-        Err(e) => handle_start_error(e, name),
+        Err(e) => {
+            if !handle_start_error(e, name) {
+                std::process::exit(1);
+            }
+        }
     }
 }

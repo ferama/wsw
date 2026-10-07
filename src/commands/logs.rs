@@ -52,7 +52,7 @@ pub fn handle(name: &str, follow: bool, full: bool, stderr: bool) {
 
             if log_files.is_empty() {
                 eprintln!("No log files found in {}", log_dir.display());
-                return;
+                std::process::exit(1);
             }
             log_files.sort_by_key(|path| {
                 fs::metadata(path)
@@ -89,6 +89,7 @@ pub fn handle(name: &str, follow: bool, full: bool, stderr: bool) {
         }
         Err(e) => {
             eprintln!("Failed to read log directory: {}", e);
+            std::process::exit(1);
         }
     }
 }
