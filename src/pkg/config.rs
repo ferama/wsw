@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tracing_appender::rolling::Rotation;
 
 use crate::pkg::SERVICE_DESCRIPTION_PREFIX;
-use crate::pkg::env;
+use crate::pkg::{account, env};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -113,6 +113,11 @@ pub struct ServiceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_log_files: Option<usize>,
 
+    /// Service that must be running before this one starts, repeatable
+    #[arg(long, value_name = "SERVICE")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<Vec<String>>,
+
     /// Run the service using the specified account (default: LocalSystem).
     /// Built-in accounts need no password: LocalSystem, LocalService,
     /// NetworkService (optionally prefixed by 'NT AUTHORITY\'), virtual
@@ -151,6 +156,7 @@ impl ServiceConfig {
             disable_logs,
             log_rotation,
             max_log_files,
+            depends_on,
             account_name,
             account_password,
         )
@@ -162,6 +168,7 @@ impl ServiceConfig {
     /// that they cannot get out of sync.
     pub fn runtime(&self) -> ServiceConfig {
         ServiceConfig {
+            depends_on: None,
             account_name: None,
             account_password: None,
             ..self.clone()
@@ -215,6 +222,33 @@ fn non_empty(list: Option<Vec<String>>) -> Vec<String> {
         .into_iter()
         .filter(|item| !item.is_empty())
         .collect()
+}
+
+impl ServiceConfig {
+    /// Validates the options stored by the SCM and applies the defaults.
+    pub fn scm(&self) -> Result<ScmSettings, String> {
+        let (account_name, account_password) = match &self.account_name {
+            Some(account) if !account.trim().is_empty() => (
+                account::scm_account_name(account),
+                account::resolve_password(account, self.account_password.clone())?,
+            ),
+            _ => (None, None),
+        };
+        Ok(ScmSettings {
+            depends_on: non_empty(self.depends_on.clone()),
+            account_name,
+            account_password,
+        })
+    }
+}
+
+/// Options stored by the SCM, validated.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScmSettings {
+    pub depends_on: Vec<String>,
+    /// None for LocalSystem
+    pub account_name: Option<String>,
+    pub account_password: Option<String>,
 }
 
 /// How the wrapped process is launched.
@@ -386,6 +420,30 @@ mod tests {
             .unwrap();
         assert!(cleared.env.is_empty());
         assert_eq!(cleared.env_file, None);
+    }
+
+    #[test]
+    fn scm_settings() {
+        let config = ServiceConfig {
+            depends_on: Some(vec!["RedminePostgreSQL".into(), "".into()]),
+            account_name: Some("NetworkService".into()),
+            ..Default::default()
+        };
+        let scm = config.scm().unwrap();
+        assert_eq!(scm.depends_on, vec!["RedminePostgreSQL"]);
+        assert_eq!(
+            scm.account_name.as_deref(),
+            Some(r"NT AUTHORITY\NetworkService")
+        );
+        assert_eq!(scm.account_password, None);
+        // SCM options are not persisted with the runtime configuration
+        assert_eq!(config.runtime(), ServiceConfig::default());
+
+        let user = ServiceConfig {
+            account_name: Some(r".\marco".into()),
+            ..Default::default()
+        };
+        assert!(user.scm().is_err());
     }
 
     #[test]

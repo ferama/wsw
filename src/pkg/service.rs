@@ -12,12 +12,14 @@ use windows_service::{
     service_control_handler::{self, ServiceControlHandlerResult, ServiceStatusHandle},
 };
 
-use windows_service::service::{ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType};
+use windows_service::service::{
+    ServiceAccess, ServiceDependency, ServiceErrorControl, ServiceInfo, ServiceStartType,
+};
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
 use std::ffi::OsString;
 
-use super::config::{RunConfig, ServiceConfig};
+use super::config::{RunConfig, ScmSettings, ServiceConfig};
 use super::registry;
 use super::restart::service_specific_code;
 use super::stop_signal::StopSignal;
@@ -194,11 +196,7 @@ fn run_service(config: &Result<RunConfig, String>) -> windows_service::Result<()
 
 /// Installs the service: the ImagePath only carries the service name, the
 /// rest of the configuration is persisted in the registry.
-pub fn install_service(
-    config: &ServiceConfig,
-    account_name: Option<String>,
-    account_password: Option<String>,
-) -> windows_service::Result<()> {
+pub fn install_service(config: &ServiceConfig, scm: &ScmSettings) -> windows_service::Result<()> {
     let name = config.service_name();
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
@@ -219,9 +217,13 @@ pub fn install_service(
         error_control: ServiceErrorControl::Normal,
         executable_path,
         launch_arguments,
-        dependencies: vec![],
-        account_name: account_name.map(OsString::from),
-        account_password: account_password.map(OsString::from),
+        dependencies: scm
+            .depends_on
+            .iter()
+            .map(|service| ServiceDependency::Service(OsString::from(service)))
+            .collect(),
+        account_name: scm.account_name.clone().map(OsString::from),
+        account_password: scm.account_password.clone().map(OsString::from),
     };
 
     let service = service_manager
