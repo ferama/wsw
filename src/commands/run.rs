@@ -75,6 +75,7 @@ pub fn handle(config_file: Option<PathBuf>, cli_config: ServiceConfig) {
 struct ForegroundStatus;
 
 impl StatusSink for ForegroundStatus {
+    fn starting(&mut self, _wait_hint: Duration) {}
     fn running(&mut self) {}
     fn stopping(&mut self, _wait_hint: Duration) {}
 }

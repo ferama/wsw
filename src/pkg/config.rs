@@ -72,6 +72,7 @@ pub enum StartType {
 }
 
 const DEFAULT_STOP_TIMEOUT: u64 = 15;
+const DEFAULT_HOOK_TIMEOUT: u64 = 30;
 const DEFAULT_SCM_FAILURE_RESET: u64 = 24 * 60 * 60;
 /// Seconds added to the stop timeout for the preshutdown timeout
 const PRESHUTDOWN_MARGIN: u64 = 15;
@@ -185,6 +186,24 @@ pub struct ServiceConfig {
     #[arg(long, value_name = "COUNT")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_restarts: Option<u32>,
+
+    /// Command line run (through 'cmd.exe /C') when the service starts,
+    /// before the wrapped process. If it fails the service does not start
+    #[arg(long, value_name = "CMDLINE")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_start: Option<String>,
+
+    /// Command line run (through 'cmd.exe /C') when the service stops,
+    /// after the wrapped process exited
+    #[arg(long, value_name = "CMDLINE")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_stop: Option<String>,
+
+    /// Seconds after which a --pre-start or --post-stop hook is killed
+    /// [default: 30]
+    #[arg(long, value_name = "SECS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hook_timeout: Option<u64>,
 
     /// If set, wrapped application logs will not be captured.
     /// This means that following call to the "logs" subcommand will not
@@ -310,6 +329,9 @@ impl ServiceConfig {
             restart_max_delay,
             reset_after,
             max_restarts,
+            pre_start,
+            post_stop,
+            hook_timeout,
             disable_logs,
             log_rotation,
             max_log_files,
@@ -422,7 +444,10 @@ impl ServiceConfig {
             env,
             env_file: self.env_file.clone().filter(|path| !path.is_empty()),
             stop_timeout: Duration::from_secs(self.stop_timeout.unwrap_or(DEFAULT_STOP_TIMEOUT)),
-            stop_cmd: self.stop_cmd.clone().filter(|cmd| !cmd.trim().is_empty()),
+            stop_cmd: non_blank(&self.stop_cmd),
+            pre_start: non_blank(&self.pre_start),
+            post_stop: non_blank(&self.post_stop),
+            hook_timeout: Duration::from_secs(self.hook_timeout.unwrap_or(DEFAULT_HOOK_TIMEOUT)),
             restart: RestartConfig::new(
                 self.restart,
                 self.restart_delay,
@@ -443,6 +468,10 @@ impl ServiceConfig {
             },
         })
     }
+}
+
+fn non_blank(value: &Option<String>) -> Option<String> {
+    value.clone().filter(|value| !value.trim().is_empty())
 }
 
 fn non_empty(list: Option<Vec<String>>) -> Vec<String> {
@@ -475,7 +504,10 @@ impl ServiceConfig {
         };
         // During a system shutdown the SCM waits for the service at most for
         // the preshutdown timeout: give it the time to stop gracefully
-        let stop_timeout = self.stop_timeout.unwrap_or(DEFAULT_STOP_TIMEOUT);
+        let mut stop_timeout = self.stop_timeout.unwrap_or(DEFAULT_STOP_TIMEOUT);
+        if non_blank(&self.post_stop).is_some() {
+            stop_timeout += self.hook_timeout.unwrap_or(DEFAULT_HOOK_TIMEOUT);
+        }
         let preshutdown_timeout = Duration::from_secs(stop_timeout + PRESHUTDOWN_MARGIN);
 
         let failure_actions = match &self.scm_failure_actions {
@@ -585,6 +617,9 @@ pub struct RunConfig {
     pub env_file: Option<String>,
     pub stop_timeout: Duration,
     pub stop_cmd: Option<String>,
+    pub pre_start: Option<String>,
+    pub post_stop: Option<String>,
+    pub hook_timeout: Duration,
     pub restart: RestartConfig,
     pub logs: LogConfig,
 }
@@ -876,6 +911,34 @@ max-log-files = 8
         assert_eq!(
             scm.account_name.as_deref(),
             Some(r"NT AUTHORITY\NetworkService")
+        );
+    }
+
+    #[test]
+    fn hooks() {
+        let run = parse_run(&["--exe", "a.exe"]).resolve().unwrap();
+        assert_eq!(run.pre_start, None);
+        assert_eq!(run.post_stop, None);
+        assert_eq!(run.hook_timeout, Duration::from_secs(30));
+
+        let config = parse_run(&[
+            "--exe",
+            "a.exe",
+            "--pre-start",
+            "migrate.bat",
+            "--post-stop",
+            "cleanup.bat",
+            "--hook-timeout",
+            "60",
+        ]);
+        let run = config.resolve().unwrap();
+        assert_eq!(run.pre_start.as_deref(), Some("migrate.bat"));
+        assert_eq!(run.post_stop.as_deref(), Some("cleanup.bat"));
+        assert_eq!(run.hook_timeout, Duration::from_secs(60));
+        // The post-stop hook runs during the shutdown too
+        assert_eq!(
+            config.scm().unwrap().preshutdown_timeout,
+            Duration::from_secs(15 + 60 + 15)
         );
     }
 

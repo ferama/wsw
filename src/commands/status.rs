@@ -161,6 +161,16 @@ fn add_configuration(table: &mut Table, name: &str) {
         }
     ]);
 
+    if let Some(pre_start) = &run.pre_start {
+        table.add_row(row!["Pre-start Hook", pre_start]);
+    }
+    if let Some(post_stop) = &run.post_stop {
+        table.add_row(row!["Post-stop Hook", post_stop]);
+    }
+    if run.pre_start.is_some() || run.post_stop.is_some() {
+        table.add_row(row!["Hook Timeout", format!("{:?}", run.hook_timeout)]);
+    }
+
     let logs = &run.logs;
     let mut logs_text = if logs.disabled {
         "output not captured".to_string()

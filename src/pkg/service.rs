@@ -123,6 +123,10 @@ impl StatusReporter {
 }
 
 impl StatusSink for StatusReporter {
+    fn starting(&mut self, wait_hint: Duration) {
+        self.pending(ServiceState::StartPending, wait_hint);
+    }
+
     fn running(&mut self) {
         StatusReporter::running(self);
     }

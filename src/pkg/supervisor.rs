@@ -19,6 +19,8 @@ const STOP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// Receives the state changes of the supervisor (reported to the SCM when
 /// running as a service).
 pub trait StatusSink {
+    /// Starting is in progress and may take up to `wait_hint` more.
+    fn starting(&mut self, wait_hint: Duration);
     /// The wrapped process had its first chance to start.
     fn running(&mut self);
     /// Stopping is in progress and may take up to `wait_hint` more.
@@ -63,6 +65,92 @@ pub fn supervise(
         info!("Environment variables: {}", names.join(", "));
     }
 
+    if let Some(pre_start) = &config.pre_start
+        && let Err(exit_code) = run_hook("pre-start", pre_start, config, &env, status, false)
+    {
+        error!("The pre-start hook failed, not starting the service");
+        return Outcome::Exited(exit_code.filter(|code| *code != 0).or(Some(1)));
+    }
+
+    let outcome = supervise_process(config, &env, stop, status, foreground);
+
+    if let Some(post_stop) = &config.post_stop
+        && run_hook("post-stop", post_stop, config, &env, status, true).is_err()
+    {
+        error!("The post-stop hook failed");
+    }
+    outcome
+}
+
+/// Runs a hook synchronously, killing it after the hook timeout. Returns
+/// the exit code of a failed hook (None if it could not run or timed out).
+fn run_hook(
+    kind: &str,
+    cmdline: &str,
+    config: &RunConfig,
+    env: &[(String, String)],
+    status: &mut dyn StatusSink,
+    stopping: bool,
+) -> Result<(), Option<i32>> {
+    let timeout = config.hook_timeout;
+    let report = |status: &mut dyn StatusSink, remaining: Duration| {
+        if stopping {
+            status.stopping(remaining + STOP_MARGIN);
+        } else {
+            status.starting(remaining + STOP_MARGIN);
+        }
+    };
+    report(status, timeout);
+    info!("Running {} hook: {}", kind, cmdline);
+
+    let mut process = match spawn_shell_command(cmdline, config, env) {
+        Ok(process) => process,
+        Err(e) => {
+            error!("Failed to run the {} hook: {}", kind, e);
+            return Err(None);
+        }
+    };
+    let started = Instant::now();
+    let mut last_report = started;
+    loop {
+        match process.child.try_wait() {
+            Ok(Some(exit_status)) if exit_status.success() => {
+                info!("The {} hook completed", kind);
+                return Ok(());
+            }
+            Ok(Some(exit_status)) => {
+                error!("The {} hook exited with status: {}", kind, exit_status);
+                return Err(exit_status.code());
+            }
+            Ok(None) => {}
+            Err(e) => {
+                error!("Failed to check the {} hook status: {}", kind, e);
+                return Err(None);
+            }
+        }
+        let elapsed = started.elapsed();
+        if elapsed >= timeout {
+            error!("The {} hook did not complete within {:?}", kind, timeout);
+            // Dropping the process kills its whole tree
+            return Err(None);
+        }
+        if last_report.elapsed() >= Duration::from_secs(1) {
+            last_report = Instant::now();
+            report(status, timeout - elapsed);
+        }
+        std::thread::sleep(STOP_POLL_INTERVAL);
+    }
+}
+
+/// Runs the wrapped process, restarting it as configured, until `stop` is
+/// triggered or the restart policy says to stop.
+fn supervise_process(
+    config: &RunConfig,
+    env: &[(String, String)],
+    stop: &StopSignal,
+    status: &mut dyn StatusSink,
+    foreground: bool,
+) -> Outcome {
     let mut backoff = config.restart.backoff();
     let mut first_start = true;
     loop {
@@ -70,7 +158,7 @@ pub fn supervise(
             return Outcome::Stopped;
         }
         let started_at = Instant::now();
-        let process = run_command(config, &env);
+        let process = run_command(config, env);
 
         // Only report Running once the child had its chance to start. A start
         // failure is not fatal: the loop keeps retrying.
@@ -106,7 +194,7 @@ pub fn supervise(
                 }
 
                 if stop.is_triggered() {
-                    stop_gracefully(&mut process, config, &env, status, foreground);
+                    stop_gracefully(&mut process, config, env, status, foreground);
                 }
                 process.kill_tree();
                 exit_code
