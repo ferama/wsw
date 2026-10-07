@@ -125,6 +125,132 @@ mod tests {
         Cli::command().debug_assert();
     }
 
+    fn parse(args: &[&str]) -> Result<Commands, clap::Error> {
+        let mut argv = vec!["wsw"];
+        argv.extend_from_slice(args);
+        Cli::try_parse_from(argv).map(|cli| cli.command.unwrap())
+    }
+
+    fn service_config(args: &[&str]) -> ServiceConfig {
+        match parse(args).unwrap() {
+            Commands::Install { config, .. } | Commands::Run { config, .. } => config,
+            _ => panic!("not install/run"),
+        }
+    }
+
+    /// Every invocation accepted by wsw 0.9.1 must keep its meaning.
+    #[test]
+    fn v0_9_1_invocations_still_parse() {
+        use crate::pkg::config::{CommandSpec, LogRotation};
+
+        // install, long flags
+        let config = service_config(&[
+            "install",
+            "--cmd",
+            r"C:\app\app.exe --x",
+            "--working-dir",
+            r"C:\app",
+            "--name",
+            "app",
+            "--disable-logs",
+            "--log-rotation",
+            "Hourly",
+            "--max-log-files",
+            "5",
+            "--account-name",
+            r".\marco",
+            "--account-password",
+            "pw",
+        ]);
+        let run = config.resolve().unwrap();
+        assert_eq!(run.name, "app");
+        assert_eq!(
+            run.command,
+            CommandSpec::Shell(r"C:\app\app.exe --x".into())
+        );
+        assert_eq!(run.working_dir.as_deref(), Some(r"C:\app"));
+        assert!(run.logs.disabled);
+        assert_eq!(run.logs.rotation, LogRotation::Hourly);
+        assert_eq!(run.logs.max_files, 5);
+        assert_eq!(config.account_name.as_deref(), Some(r".\marco"));
+        assert_eq!(config.account_password.as_deref(), Some("pw"));
+
+        // install, short flags and the 'i' alias, -d followed by other flags
+        for args in [
+            &[
+                "i", "-c", "app.exe", "-d", "-n", "app", "-l", "never", "-m", "3",
+            ][..],
+            &[
+                "install", "-d", "-c", "app.exe", "-n", "app", "-l", "never", "-m", "3",
+            ][..],
+            &[
+                "install", "-c", "app.exe", "-n", "app", "-l", "never", "-m", "3", "-d",
+            ][..],
+            &["install", "-c=app.exe", "-n=app", "-l=never", "-m=3", "-d"][..],
+            &[
+                "install",
+                "--cmd=app.exe",
+                "--name=app",
+                "--log-rotation=never",
+                "--max-log-files=3",
+                "--disable-logs",
+            ][..],
+        ] {
+            let run = service_config(args).resolve().unwrap();
+            assert_eq!(run.name, "app", "{args:?}");
+            assert_eq!(
+                run.command,
+                CommandSpec::Shell("app.exe".into()),
+                "{args:?}"
+            );
+            assert!(run.logs.disabled, "{args:?}");
+            assert_eq!(run.logs.rotation, LogRotation::Never, "{args:?}");
+            assert_eq!(run.logs.max_files, 3, "{args:?}");
+        }
+
+        // Grouped short flags
+        let run = service_config(&["install", "-dc", "app.exe"]).resolve().unwrap();
+        assert!(run.logs.disabled);
+        assert_eq!(run.command, CommandSpec::Shell("app.exe".into()));
+
+        // Defaults of 0.9.1
+        let run = service_config(&["install", "-c", "app.exe"])
+            .resolve()
+            .unwrap();
+        assert_eq!(run.name, "wsw");
+        assert!(!run.logs.disabled);
+        assert_eq!(run.logs.rotation, LogRotation::Daily);
+        assert_eq!(run.logs.max_files, 30);
+
+        // The other commands, with their aliases and short flags
+        for args in [
+            &["logs"][..],
+            &["logs", "-n", "app", "-f", "--full"][..],
+            &["list"][..],
+            &["ls"][..],
+            &["start", "-n", "app"][..],
+            &["stop", "--name", "app"][..],
+            &["status", "-n", "app"][..],
+            &["restart", "-n", "app"][..],
+            &["uninstall", "-n", "app"][..],
+            &["u", "--name", "app"][..],
+        ] {
+            assert!(parse(args).is_ok(), "{args:?}");
+        }
+        match parse(&["logs", "-n", "app", "-f", "--full"]).unwrap() {
+            Commands::Logs {
+                name,
+                follow,
+                full,
+                stderr,
+            } => {
+                assert_eq!(name, "app");
+                assert!(follow && full && !stderr);
+            }
+            _ => panic!("not logs"),
+        }
+    }
+
     #[test]
     fn update_accepts_service_options() {
         let cli = Cli::try_parse_from([
