@@ -2,6 +2,7 @@ use crate::{cli::LogRotation, pkg::service::install_service};
 use windows_service::Error;
 use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
 
+#[allow(clippy::too_many_arguments)]
 pub fn handle(
     cmd: &str,
     working_dir: Option<String>,
@@ -10,17 +11,17 @@ pub fn handle(
     log_rotation: LogRotation,
     max_log_files: usize,
     account_name: Option<String>,
-    account_password: Option<String>
+    account_password: Option<String>,
 ) {
     match install_service(
-        &name,
+        name,
         working_dir,
-        &cmd,
+        cmd,
         disable_logs,
         log_rotation,
         max_log_files,
         account_name,
-        account_password
+        account_password,
     ) {
         Ok(_) => println!("Service '{}' installed successfully.", name),
         Err(Error::Winapi(e)) => match e.raw_os_error() {

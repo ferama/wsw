@@ -15,7 +15,7 @@ use crate::pkg::log_writer::LocalTimer;
 pub const SERVICE_LOG_PREFIX: &str = "|SVC-LOG| ";
 
 pub fn get_log_dir() -> PathBuf {
-    let log_path = match env::var("PROGRAMDATA") {
+    match env::var("PROGRAMDATA") {
         Ok(path) => {
             let log_path = PathBuf::from(path).join("wsw").join("logs");
             std::fs::create_dir_all(&log_path).unwrap_or_else(|_| {
@@ -38,8 +38,7 @@ pub fn get_log_dir() -> PathBuf {
             };
             log_path
         }
-    };
-    log_path
+    }
 }
 
 pub fn get_log_filename_prefix(name: &str) -> String {

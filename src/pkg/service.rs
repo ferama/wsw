@@ -10,7 +10,10 @@ use std::{
 };
 use tracing::{error, info};
 use windows::{
-    Win32::{Foundation::CloseHandle, System::Services::*},
+    Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        System::Services::*,
+    },
     core::{PCWSTR, PWSTR},
 };
 use windows_service::{
@@ -126,7 +129,7 @@ pub fn service_main(_args: Vec<OsString>) {
 
                 let _ = process.1.kill();
                 unsafe {
-                    if let Err(e) = CloseHandle(std::mem::transmute(process.0)) {
+                    if let Err(e) = CloseHandle(HANDLE(process.0)) {
                         error!("Failed to close handle: {:?}", e);
                     }
                 }
@@ -149,6 +152,7 @@ pub fn service_main(_args: Vec<OsString>) {
         .expect("set service stopped");
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn install_service(
     name: &str,
     working_dir: Option<String>,
@@ -157,7 +161,7 @@ pub fn install_service(
     log_rotation: LogRotation,
     max_log_files: usize,
     account_name: Option<String>,
-    account_password: Option<String>
+    account_password: Option<String>,
 ) -> windows_service::Result<()> {
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
@@ -184,15 +188,9 @@ pub fn install_service(
         launch_arguments.push(OsString::from("--disable-logs"));
     }
 
-    let an = match account_name {
-        Some(name) => Some(OsString::from(name)),
-        None => None
-    };
+    let an = account_name.map(OsString::from);
 
-    let ap = match account_password {
-        Some(password) => Some(OsString::from(password)),
-        None => None
-    };
+    let ap = account_password.map(OsString::from);
 
     let service_info = ServiceInfo {
         name: OsString::from(name),
@@ -200,7 +198,7 @@ pub fn install_service(
         service_type: SERVICE_TYPE,
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
-        executable_path: executable_path.into(),
+        executable_path,
         launch_arguments,
         dependencies: vec![],
         account_name: an,
@@ -228,7 +226,7 @@ pub fn uninstall_service(name: &str) -> windows_service::Result<()> {
 
     let _ = service.stop().is_err(); // Ignore error if service is already stopped
     match wait_for_service_status(
-        &name,
+        name,
         ServiceState::Stopped,
         std::time::Duration::from_secs(10),
     ) {
@@ -286,8 +284,7 @@ pub fn get_service_command_line(name: &str) -> windows_service::Result<String> {
         let result = QueryServiceConfigW(service_handle, None, 0, &mut needed);
 
         if result.is_ok() {
-            return Err(windows_service::Error::Winapi(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(windows_service::Error::Winapi(io::Error::other(
                 "Unexpected result while querying service config",
             )));
         }
@@ -305,7 +302,7 @@ pub fn get_service_command_line(name: &str) -> windows_service::Result<String> {
 
         let binary_path = PCWSTR(config.lpBinaryPathName.0)
             .to_string()
-            .map_err(|e| windows_service::Error::Winapi(io::Error::new(io::ErrorKind::Other, e)))?;
+            .map_err(|e| windows_service::Error::Winapi(io::Error::other(e)))?;
 
         Ok(binary_path)
     }
@@ -366,13 +363,13 @@ pub fn list_services_with_status() -> windows_service::Result<Vec<(String, Strin
     let mut service_list = Vec::new();
 
     unsafe {
-        let scm_handle_res = OpenSCManagerW(None, None, SC_MANAGER_ENUMERATE_SERVICE);
-        if scm_handle_res.is_err() {
-            let win_err = scm_handle_res.unwrap_err();
-            let io_err = std::io::Error::from_raw_os_error(win_err.code().0);
-            return Err(windows_service::Error::Winapi(io_err));
-        }
-        let scm_handle = scm_handle_res.unwrap();
+        let scm_handle = match OpenSCManagerW(None, None, SC_MANAGER_ENUMERATE_SERVICE) {
+            Ok(handle) => handle,
+            Err(win_err) => {
+                let io_err = std::io::Error::from_raw_os_error(win_err.code().0);
+                return Err(windows_service::Error::Winapi(io_err));
+            }
+        };
         if scm_handle.0.is_null() {
             return Err(windows_service::Error::Winapi(
                 std::io::Error::from_raw_os_error(
@@ -437,7 +434,7 @@ pub fn list_services_with_status() -> windows_service::Result<Vec<(String, Strin
 
         let _ = CloseServiceHandle(scm_handle);
     }
-    return Ok(service_list);
+    Ok(service_list)
 }
 
 fn widestring_to_string(ptr: PWSTR) -> String {

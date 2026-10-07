@@ -29,10 +29,10 @@ pub fn handle_start_error(e: Error, name: &str) {
 }
 
 pub fn handle(name: &str) {
-    match start_service(&name) {
+    match start_service(name) {
         Ok(_) => {
             match wait_for_service_status(
-                &name,
+                name,
                 ServiceState::Running,
                 std::time::Duration::from_secs(10),
             ) {

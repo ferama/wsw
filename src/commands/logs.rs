@@ -19,7 +19,7 @@ pub fn handle(name: &str, follow: bool, full: bool) {
                         && path
                             .file_name()
                             .and_then(|f| f.to_str())
-                            .map(|f| f.starts_with(get_log_filename_prefix(&name).as_str()))
+                            .map(|f| f.starts_with(get_log_filename_prefix(name).as_str()))
                             .unwrap_or(false)
                 })
                 .collect();
@@ -75,7 +75,6 @@ pub fn handle(name: &str, follow: bool, full: bool) {
         }
         Err(e) => {
             eprintln!("Failed to read log directory: {}", e);
-            return;
         }
     }
 }

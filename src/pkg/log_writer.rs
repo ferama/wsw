@@ -48,7 +48,7 @@ impl LogWriter {
         }
 
         // 2. Try UTF-16LE (only if even length)
-        if buf.len() % 2 == 0 {
+        if buf.len().is_multiple_of(2) {
             let utf16: Vec<u16> = buf
                 .chunks(2)
                 .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))

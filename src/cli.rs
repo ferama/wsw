@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use clap::{Parser, Subcommand, command};
+use clap::{Parser, Subcommand};
 use tracing_appender::rolling::Rotation;
 
 use crate::pkg::service::SERVICE_DESCRIPTION_PREFIX;
@@ -13,14 +13,15 @@ pub enum LogRotation {
     Never,
 }
 
-impl ToString for LogRotation {
-    fn to_string(&self) -> String {
-        match self {
-            LogRotation::Minutely => "minutely".to_string(),
-            LogRotation::Hourly => "hourly".to_string(),
-            LogRotation::Daily => "daily".to_string(),
-            LogRotation::Never => "never".to_string(),
-        }
+impl std::fmt::Display for LogRotation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            LogRotation::Minutely => "minutely",
+            LogRotation::Hourly => "hourly",
+            LogRotation::Daily => "daily",
+            LogRotation::Never => "never",
+        };
+        f.write_str(s)
     }
 }
 
@@ -147,7 +148,7 @@ pub enum Commands {
 
         /// Run the service using specified account_password
         #[arg(long, requires = "account_name")]
-        account_password: Option<String>
+        account_password: Option<String>,
     },
     /// Stop and uninstall the Windows service
     #[command(visible_alias = "u")]

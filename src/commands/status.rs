@@ -6,7 +6,7 @@ use prettytable::{Table, row};
 use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SERVICE_DOES_NOT_EXIST};
 
 pub fn handle(name: &str) {
-    match get_service_status(&name) {
+    match get_service_status(name) {
         Ok(status) => {
             let mut table = Table::new();
 
@@ -28,7 +28,7 @@ pub fn handle(name: &str) {
                 }
             }
 
-            if let Ok(commandline) = get_service_command_line(&name) {
+            if let Ok(commandline) = get_service_command_line(name) {
                 table.add_row(row!["FullCmd", format!("{}", commandline)]);
             }
 

@@ -36,13 +36,10 @@ fn create_job_object() -> Result<HANDLE, std::io::Error> {
             std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
         );
         if set_result == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "Failed to set information on Job Object: {}",
-                    GetLastError()
-                ),
-            ));
+            return Err(io::Error::other(format!(
+                "Failed to set information on Job Object: {}",
+                GetLastError()
+            )));
         }
 
         Ok(handle)
@@ -67,15 +64,11 @@ fn find_working_dir(cmdline: &str, working_dir: Option<String>) -> PathBuf {
             cmd_working_dir = Path::new(parent).to_path_buf();
         }
 
-        if cmd_working_dir == Path::new("") {
-            match which(exe) {
-                Ok(path) => {
-                    if let Some(parent) = path.parent() {
-                        cmd_working_dir = Path::new(parent).to_path_buf();
-                    }
-                }
-                Err(_) => {}
-            }
+        if cmd_working_dir == Path::new("")
+            && let Ok(path) = which(exe)
+            && let Some(parent) = path.parent()
+        {
+            cmd_working_dir = Path::new(parent).to_path_buf();
         }
     }
 
@@ -140,10 +133,10 @@ pub fn run_command(
         let assign_result = unsafe { AssignProcessToJobObject(job, process_handle) };
         if assign_result == 0 {
             unsafe {
-                let err = io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("Failed to assign process to Job Object: {}", GetLastError()),
-                );
+                let err = io::Error::other(format!(
+                    "Failed to assign process to Job Object: {}",
+                    GetLastError()
+                ));
                 CloseHandle(job);
                 return Err(err);
             }
@@ -152,10 +145,10 @@ pub fn run_command(
 
     unsafe {
         if let Ok(child) = command {
-            return Ok((std::mem::transmute(job), child));
+            Ok((job, child))
         } else {
             CloseHandle(job);
-            return Err(command.unwrap_err());
+            Err(command.unwrap_err())
         }
     }
 }

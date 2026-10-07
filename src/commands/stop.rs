@@ -29,10 +29,10 @@ pub fn handle_stop_error(e: Error, name: &str) {
 }
 
 pub fn handle(name: &str) {
-    match stop_service(&name) {
+    match stop_service(name) {
         Ok(_) => {
             match wait_for_service_status(
-                &name,
+                name,
                 ServiceState::Stopped,
                 std::time::Duration::from_secs(10),
             ) {
