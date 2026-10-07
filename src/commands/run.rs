@@ -26,15 +26,22 @@ pub fn handle(
         disable_logs,
     });
     if let Err(_e) = service_dispatcher::start(name, ffi_service_main) {
-        match run_command(cmd, working_dir, disable_logs) {
-            Ok(mut child) => {
-                if let Err(e) = child.child.wait() {
+        // Not started by the SCM: run the command once in the foreground and
+        // exit with its exit code
+        let exit_code = match run_command(cmd, working_dir, disable_logs) {
+            Ok(mut child) => match child.child.wait() {
+                Ok(status) => status.code().unwrap_or(1),
+                Err(e) => {
                     tracing::error!("Failed to wait for child process: {}", e);
+                    1
                 }
-            }
+            },
             Err(e) => {
                 tracing::error!("Failed to run cmd: {:?}", e);
+                1
             }
-        }
+        };
+        drop(_guard);
+        std::process::exit(exit_code);
     }
 }

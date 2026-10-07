@@ -43,9 +43,32 @@ impl Backoff {
     }
 }
 
+/// Service specific exit code reported to the SCM when the service
+/// terminates on its own because of the wrapped process. A non-zero code is
+/// what lets the SCM recovery actions kick in, so a child that exited with
+/// 0 or could not be started at all (`None`) is reported as 1.
+pub fn service_specific_code(child_exit_code: Option<i32>) -> u32 {
+    match child_exit_code {
+        Some(code) if code != 0 => code as u32,
+        _ => 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn service_specific_code_is_never_zero() {
+        assert_eq!(service_specific_code(Some(3)), 3);
+        assert_eq!(service_specific_code(Some(0)), 1);
+        assert_eq!(service_specific_code(None), 1);
+        // NTSTATUS crash codes are reported as is
+        assert_eq!(
+            service_specific_code(Some(0xC000_0005_u32 as i32)),
+            0xC000_0005
+        );
+    }
 
     const S: fn(u64) -> Duration = Duration::from_secs;
 

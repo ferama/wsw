@@ -23,7 +23,7 @@ use std::ffi::OsString;
 
 use crate::cli::LogRotation;
 
-use super::restart::Backoff;
+use super::restart::{Backoff, service_specific_code};
 use super::runner::run_command;
 use super::stop_signal::StopSignal;
 
@@ -168,7 +168,14 @@ fn run_service(options: &RunOptions) -> windows_service::Result<()> {
 
     let mut backoff = Backoff::new(RESTART_DELAY, RESTART_MAX_DELAY, RESTART_RESET_AFTER);
     let mut first_start = true;
-    while !stop.is_triggered() {
+    // None when stopped on request, otherwise the exit code of the child
+    // that made the service terminate on its own (None if it could not be
+    // started). With the current always-restart behaviour the loop only ends
+    // on request.
+    let outcome: Option<Option<i32>> = loop {
+        if stop.is_triggered() {
+            break None;
+        }
         let started_at = Instant::now();
         let process = run_command(
             &options.cmd,
@@ -222,10 +229,21 @@ fn run_service(options: &RunOptions) -> windows_service::Result<()> {
             );
             stop.wait_timeout(delay);
         }
-    }
+    };
 
     status.pending(ServiceState::StopPending, STOP_WAIT_HINT);
-    status.stopped(ServiceExitCode::Win32(0));
+    let exit_code = match outcome {
+        None => ServiceExitCode::Win32(0),
+        Some(child_exit_code) => {
+            let code = service_specific_code(child_exit_code);
+            error!(
+                "Service terminated on its own, reporting exit code {}",
+                code
+            );
+            ServiceExitCode::ServiceSpecific(code)
+        }
+    };
+    status.stopped(exit_code);
     Ok(())
 }
 
