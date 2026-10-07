@@ -1,12 +1,4 @@
-use std::{
-    io,
-    sync::{
-        Arc, OnceLock,
-        atomic::{AtomicBool, Ordering},
-    },
-    thread,
-    time::Duration,
-};
+use std::{io, sync::OnceLock, time::Duration};
 use tracing::{error, info};
 use windows::{
     Win32::System::Services::*,
@@ -28,6 +20,7 @@ use std::ffi::OsString;
 use crate::cli::LogRotation;
 
 use super::runner::run_command;
+use super::stop_signal::StopSignal;
 
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 pub use super::SERVICE_DESCRIPTION_PREFIX;
@@ -138,17 +131,21 @@ impl StatusReporter {
 
 /// How long the SCM should wait for the service to leave the start pending state.
 const START_WAIT_HINT: Duration = Duration::from_secs(10);
+/// How long the SCM should wait for the service to leave the stop pending state.
+const STOP_WAIT_HINT: Duration = Duration::from_secs(10);
+/// How often the child process is checked for exit.
+const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 fn run_service(options: &RunOptions) -> windows_service::Result<()> {
-    let running = Arc::new(AtomicBool::new(true));
-    let stop_flag = running.clone();
+    let stop = StopSignal::new();
+    let stop_handler = stop.clone();
 
     let event_handler =
         service_control_handler::register(
             &options.name,
             move |control_event| match control_event {
                 ServiceControl::Stop => {
-                    stop_flag.store(false, Ordering::SeqCst);
+                    stop_handler.trigger();
                     ServiceControlHandlerResult::NoError
                 }
                 ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
@@ -160,7 +157,7 @@ fn run_service(options: &RunOptions) -> windows_service::Result<()> {
     status.pending(ServiceState::StartPending, START_WAIT_HINT);
 
     let mut first_start = true;
-    while running.load(Ordering::SeqCst) {
+    while !stop.is_triggered() {
         let process = run_command(
             &options.cmd,
             options.working_dir.clone(),
@@ -177,14 +174,13 @@ fn run_service(options: &RunOptions) -> windows_service::Result<()> {
         match process {
             Err(e) => {
                 error!("Failed to start command: {}", e);
-                thread::sleep(Duration::from_secs(5));
+                stop.wait_timeout(Duration::from_secs(5));
             }
             Ok(mut process) => {
                 info!("Child process started with PID: {}", process.id());
 
-                // Poll for shutdown
-                while running.load(Ordering::SeqCst) {
-                    thread::sleep(Duration::from_secs(1));
+                // Wait for the child to exit or for a stop request
+                while !stop.wait_timeout(POLL_INTERVAL) {
                     match process.child.try_wait() {
                         Ok(Some(status)) => {
                             error!("Child exited with status: {}", status);
@@ -198,12 +194,19 @@ fn run_service(options: &RunOptions) -> windows_service::Result<()> {
                     }
                 }
 
+                if stop.is_triggered() {
+                    status.pending(ServiceState::StopPending, STOP_WAIT_HINT);
+                    info!("Stopping child process with PID: {}", process.id());
+                }
                 process.kill_tree();
-                thread::sleep(Duration::from_secs(1));
+                if !stop.is_triggered() {
+                    stop.wait_timeout(Duration::from_secs(1));
+                }
             }
         }
     }
 
+    status.pending(ServiceState::StopPending, STOP_WAIT_HINT);
     status.stopped(ServiceExitCode::Win32(0));
     Ok(())
 }
