@@ -45,6 +45,12 @@ impl AccountKind {
     pub fn requires_password(self) -> bool {
         self == AccountKind::User
     }
+
+    /// Whether the account holds the "Log on as a service" right already:
+    /// built-in accounts always do, virtual accounts get it from the SCM.
+    pub fn has_implicit_logon_right(self) -> bool {
+        !matches!(self, AccountKind::User | AccountKind::ManagedService)
+    }
 }
 
 /// Returns the account name in the form the SCM expects, or None for
@@ -109,6 +115,14 @@ mod tests {
         assert!(!AccountKind::NetworkService.requires_password());
         assert!(!AccountKind::ManagedService.requires_password());
         assert!(!AccountKind::Virtual.requires_password());
+    }
+
+    #[test]
+    fn logon_right_is_needed_by_users_and_gmsa_only() {
+        assert!(!AccountKind::User.has_implicit_logon_right());
+        assert!(!AccountKind::ManagedService.has_implicit_logon_right());
+        assert!(AccountKind::NetworkService.has_implicit_logon_right());
+        assert!(AccountKind::Virtual.has_implicit_logon_right());
     }
 
     #[test]

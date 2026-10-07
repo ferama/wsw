@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use tracing_appender::rolling::Rotation;
 
 use crate::pkg::SERVICE_DESCRIPTION_PREFIX;
-use crate::pkg::{account, env};
+use crate::pkg::account::{self, AccountKind};
+use crate::pkg::env;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -150,6 +151,18 @@ pub struct ServiceConfig {
     #[arg(long)]
     #[serde(skip_serializing)]
     pub account_password: Option<String>,
+
+    /// Grant the "Log on as a service" right to --account-name. Only needed
+    /// by regular users and gMSA, built-in accounts already have it
+    #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_logon_right: Option<bool>,
+
+    /// Grant the service account "Modify" permissions on a directory and
+    /// everything inside it, repeatable
+    #[arg(long, value_name = "PATH")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grant_dir: Option<Vec<String>>,
 }
 
 /// Overwrites the fields of `$base` with the ones set in `$over`.
@@ -179,6 +192,8 @@ impl ServiceConfig {
             depends_on,
             account_name,
             account_password,
+            grant_logon_right,
+            grant_dir,
         )
     }
 
@@ -192,6 +207,8 @@ impl ServiceConfig {
             depends_on: None,
             account_name: None,
             account_password: None,
+            grant_logon_right: None,
+            grant_dir: None,
             ..self.clone()
         }
     }
@@ -248,18 +265,21 @@ fn non_empty(list: Option<Vec<String>>) -> Vec<String> {
 impl ServiceConfig {
     /// Validates the options stored by the SCM and applies the defaults.
     pub fn scm(&self) -> Result<ScmSettings, String> {
-        let (account_name, account_password) = match &self.account_name {
+        let (account_name, account_password, needs_logon_right) = match &self.account_name {
             Some(account) if !account.trim().is_empty() => (
                 account::scm_account_name(account),
                 account::resolve_password(account, self.account_password.clone())?,
+                !AccountKind::classify(account).has_implicit_logon_right(),
             ),
-            _ => (None, None),
+            _ => (None, None, false),
         };
         Ok(ScmSettings {
             start_type: self.start_type.unwrap_or(StartType::Auto),
             depends_on: non_empty(self.depends_on.clone()),
             account_name,
             account_password,
+            grant_logon_right: self.grant_logon_right.unwrap_or(false) && needs_logon_right,
+            grant_dirs: non_empty(self.grant_dir.clone()),
         })
     }
 }
@@ -272,6 +292,9 @@ pub struct ScmSettings {
     /// None for LocalSystem
     pub account_name: Option<String>,
     pub account_password: Option<String>,
+    /// Grant SeServiceLogonRight, only set when the account needs it
+    pub grant_logon_right: bool,
+    pub grant_dirs: Vec<String>,
 }
 
 /// How the wrapped process is launched.
@@ -468,6 +491,21 @@ mod tests {
             ..Default::default()
         };
         assert!(user.scm().is_err());
+
+        // The logon right is only granted to accounts that need it
+        let grant = |account: &str| ServiceConfig {
+            account_name: Some(account.into()),
+            account_password: Some("pw".into()),
+            grant_logon_right: Some(true),
+            grant_dir: Some(vec![r"C:\Redmine".into()]),
+            ..Default::default()
+        };
+        let scm = grant(r".\marco").scm().unwrap();
+        assert!(scm.grant_logon_right);
+        assert_eq!(scm.grant_dirs, vec![r"C:\Redmine"]);
+        assert!(!grant("NetworkService").scm().unwrap().grant_logon_right);
+        assert!(grant(r"CONTOSO\gmsa$").scm().unwrap().grant_logon_right);
+        assert_eq!(grant(r".\marco").runtime(), ServiceConfig::default());
     }
 
     #[test]

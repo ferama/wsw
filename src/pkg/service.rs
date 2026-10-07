@@ -22,6 +22,7 @@ use std::ffi::OsString;
 use super::config::{RunConfig, ScmSettings, ServiceConfig, StartType};
 use super::registry;
 use super::restart::service_specific_code;
+use super::security;
 use super::stop_signal::StopSignal;
 use super::supervisor::{Outcome, STOP_WAIT_HINT, StatusSink, supervise};
 use windows_sys::Win32::Foundation::ERROR_BAD_CONFIGURATION;
@@ -257,6 +258,17 @@ fn scm_start_type(start_type: StartType) -> ServiceStartType {
 /// Applies the settings that are not part of CreateService/ChangeServiceConfig.
 fn configure_service(service: &Service, scm: &ScmSettings) -> windows_service::Result<()> {
     service.set_delayed_auto_start(scm.start_type == StartType::DelayedAuto)?;
+
+    let account = scm.account_name.as_deref();
+    if scm.grant_logon_right
+        && let Some(account) = account
+    {
+        security::grant_service_logon_right(account).map_err(windows_service::Error::Winapi)?;
+    }
+    // Virtual accounts (NT SERVICE\<name>) only exist once the service has been created
+    for dir in &scm.grant_dirs {
+        security::grant_directory_access(dir, account).map_err(windows_service::Error::Winapi)?;
+    }
     Ok(())
 }
 
