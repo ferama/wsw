@@ -1,14 +1,17 @@
+use std::time::Duration;
+
 use windows_service::{define_windows_service, service_dispatcher};
 
 use crate::{
     cli::ServiceConfig,
     pkg::{
         config::{LogConfig, LogRotation, RunConfig},
-        env,
+        console,
         logs::setup_logging,
         registry,
-        runner::run_command,
         service::{service_main, set_run_config},
+        stop_signal::StopSignal,
+        supervisor::{Outcome, StatusSink, supervise},
     },
 };
 
@@ -26,7 +29,7 @@ fn load_config(cli_config: ServiceConfig) -> Result<RunConfig, String> {
     match registry::read_config(&name) {
         Ok(Some(stored)) => stored.merge(cli_config).resolve(),
         Ok(None) => Err(format!(
-            "no configuration found for service '{}': use --cmd",
+            "no configuration found for service '{}': use --exe or --cmd",
             name
         )),
         Err(e) => Err(format!(
@@ -53,25 +56,10 @@ pub fn handle(cli_config: ServiceConfig) {
 
     set_run_config(config.clone());
     if let Err(_e) = service_dispatcher::start(&name, ffi_service_main) {
-        // Not started by the SCM: run the command once in the foreground and
-        // exit with its exit code
+        // Not started by the SCM: supervise the command in the foreground,
+        // with the same behaviour as the service, until Ctrl+C
         let exit_code = match config {
-            Ok(config) => match env::load(config.env_file.as_deref(), &config.env)
-                .map_err(std::io::Error::other)
-                .and_then(|env| run_command(&config, &env))
-            {
-                Ok(mut child) => match child.child.wait() {
-                    Ok(status) => status.code().unwrap_or(1),
-                    Err(e) => {
-                        tracing::error!("Failed to wait for child process: {}", e);
-                        1
-                    }
-                },
-                Err(e) => {
-                    tracing::error!("Failed to run cmd: {:?}", e);
-                    1
-                }
-            },
+            Ok(config) => run_foreground(&config),
             Err(e) => {
                 tracing::error!("Invalid configuration: {}", e);
                 1
@@ -79,5 +67,23 @@ pub fn handle(cli_config: ServiceConfig) {
         };
         drop(_guard);
         std::process::exit(exit_code);
+    }
+}
+
+struct ForegroundStatus;
+
+impl StatusSink for ForegroundStatus {
+    fn running(&mut self) {}
+    fn stopping(&mut self, _wait_hint: Duration) {}
+}
+
+fn run_foreground(config: &RunConfig) -> i32 {
+    let stop = StopSignal::new();
+    if let Err(e) = console::install_ctrl_handler(Some(stop.clone())) {
+        tracing::error!("Failed to install the console control handler: {}", e);
+    }
+    match supervise(config, &stop, &mut ForegroundStatus, true) {
+        Outcome::Stopped => 0,
+        Outcome::Exited(code) => code.unwrap_or(1),
     }
 }

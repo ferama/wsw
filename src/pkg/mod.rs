@@ -1,6 +1,8 @@
 pub mod account;
 pub mod cmdline;
 pub mod config;
+#[cfg(windows)]
+pub mod console;
 pub mod env;
 pub mod log_writer;
 pub mod logs;

@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::time::Duration;
 
 use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
@@ -68,6 +69,10 @@ pub enum StartType {
     Disabled,
 }
 
+const DEFAULT_STOP_TIMEOUT: u64 = 15;
+/// Seconds added to the stop timeout for the preshutdown timeout
+const PRESHUTDOWN_MARGIN: u64 = 15;
+
 /// Every option of a wsw service.
 ///
 /// The same structure is used for the command line flags, the TOML
@@ -121,6 +126,19 @@ pub struct ServiceConfig {
     #[arg(long, value_name = "PATH")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env_file: Option<String>,
+
+    /// Seconds to wait for the wrapped process to exit after asking it to
+    /// stop (Ctrl+C or --stop-cmd), before killing its whole process tree
+    /// [default: 15]
+    #[arg(long, value_name = "SECS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_timeout: Option<u64>,
+
+    /// Command line run (through 'cmd.exe /C') to ask the wrapped process to
+    /// stop, instead of sending it Ctrl+C
+    #[arg(long, value_name = "CMDLINE")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_cmd: Option<String>,
 
     /// If set, wrapped application logs will not be captured.
     /// This means that following call to the "logs" subcommand will not
@@ -206,6 +224,8 @@ impl ServiceConfig {
             working_dir,
             env,
             env_file,
+            stop_timeout,
+            stop_cmd,
             disable_logs,
             log_rotation,
             max_log_files,
@@ -277,6 +297,8 @@ impl ServiceConfig {
             working_dir: self.working_dir.clone().filter(|dir| !dir.is_empty()),
             env,
             env_file: self.env_file.clone().filter(|path| !path.is_empty()),
+            stop_timeout: Duration::from_secs(self.stop_timeout.unwrap_or(DEFAULT_STOP_TIMEOUT)),
+            stop_cmd: self.stop_cmd.clone().filter(|cmd| !cmd.trim().is_empty()),
             logs: LogConfig {
                 disabled: self.disable_logs.unwrap_or(false),
                 rotation: self.log_rotation.unwrap_or(LogRotation::Daily),
@@ -304,7 +326,13 @@ impl ServiceConfig {
             ),
             _ => (None, None, false),
         };
+        // During a system shutdown the SCM waits for the service at most for
+        // the preshutdown timeout: give it the time to stop gracefully
+        let stop_timeout = self.stop_timeout.unwrap_or(DEFAULT_STOP_TIMEOUT);
+        let preshutdown_timeout = Duration::from_secs(stop_timeout + PRESHUTDOWN_MARGIN);
+
         Ok(ScmSettings {
+            preshutdown_timeout,
             start_type: self.start_type.unwrap_or(StartType::Auto),
             depends_on: non_empty(self.depends_on.clone()),
             account_name,
@@ -318,6 +346,7 @@ impl ServiceConfig {
 /// Options stored by the SCM, validated.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScmSettings {
+    pub preshutdown_timeout: Duration,
     pub start_type: StartType,
     pub depends_on: Vec<String>,
     /// None for LocalSystem
@@ -364,6 +393,8 @@ pub struct RunConfig {
     /// Unexpanded KEY=VALUE entries
     pub env: Vec<String>,
     pub env_file: Option<String>,
+    pub stop_timeout: Duration,
+    pub stop_cmd: Option<String>,
     pub logs: LogConfig,
 }
 
@@ -486,6 +517,29 @@ mod tests {
         assert_eq!(
             merged.resolve().unwrap().command,
             CommandSpec::Shell("new.bat".into())
+        );
+    }
+
+    #[test]
+    fn stop_options() {
+        let run = parse_run(&["--exe", "a.exe"]).resolve().unwrap();
+        assert_eq!(run.stop_timeout, Duration::from_secs(15));
+        assert_eq!(run.stop_cmd, None);
+
+        let config = parse_run(&[
+            "--exe",
+            "a.exe",
+            "--stop-timeout",
+            "20",
+            "--stop-cmd",
+            "a.exe --shutdown",
+        ]);
+        let run = config.resolve().unwrap();
+        assert_eq!(run.stop_timeout, Duration::from_secs(20));
+        assert_eq!(run.stop_cmd.as_deref(), Some("a.exe --shutdown"));
+        assert_eq!(
+            config.scm().unwrap().preshutdown_timeout,
+            Duration::from_secs(35)
         );
     }
 

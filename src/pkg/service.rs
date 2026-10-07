@@ -20,11 +20,12 @@ use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 use std::ffi::OsString;
 
 use super::config::{RunConfig, ScmSettings, ServiceConfig, StartType};
+use super::console;
 use super::registry;
 use super::restart::service_specific_code;
 use super::security;
 use super::stop_signal::StopSignal;
-use super::supervisor::{Outcome, STOP_WAIT_HINT, StatusSink, supervise};
+use super::supervisor::{Outcome, STOP_MARGIN, StatusSink, supervise};
 use windows_sys::Win32::Foundation::ERROR_BAD_CONFIGURATION;
 
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
@@ -177,9 +178,14 @@ fn run_service(config: &Result<RunConfig, String>) -> windows_service::Result<()
 
     status.pending(ServiceState::StartPending, START_WAIT_HINT);
 
-    let outcome = supervise(config, &stop, &mut status);
+    // Needed to survive the Ctrl+C sent to the wrapped process on stop
+    if let Err(e) = console::install_ctrl_handler(None) {
+        error!("Failed to install the console control handler: {}", e);
+    }
 
-    status.pending(ServiceState::StopPending, STOP_WAIT_HINT);
+    let outcome = supervise(config, &stop, &mut status, false);
+
+    status.pending(ServiceState::StopPending, STOP_MARGIN);
     let exit_code = match outcome {
         Outcome::Stopped => ServiceExitCode::Win32(0),
         Outcome::Exited(child_exit_code) => {
@@ -258,6 +264,7 @@ fn scm_start_type(start_type: StartType) -> ServiceStartType {
 /// Applies the settings that are not part of CreateService/ChangeServiceConfig.
 fn configure_service(service: &Service, scm: &ScmSettings) -> windows_service::Result<()> {
     service.set_delayed_auto_start(scm.start_type == StartType::DelayedAuto)?;
+    service.set_preshutdown_timeout(scm.preshutdown_timeout)?;
 
     let account = scm.account_name.as_deref();
     if scm.grant_logon_right
@@ -369,37 +376,44 @@ pub fn get_service_command_line(name: &str) -> windows_service::Result<String> {
     }
 }
 
+/// Waits for the service to reach `target_state`.
+///
+/// Like any well behaved SCM client, the wait goes on as long as the
+/// service reports progress: `timeout` (or the wait hint of the service, if
+/// longer) is counted from the last checkpoint change. This lets services
+/// with a long stop timeout stop without the client giving up early.
 pub fn wait_for_service_status(
     name: &str,
     target_state: ServiceState,
     timeout: Duration,
 ) -> windows_service::Result<()> {
     // Connect to the SCM
-    let manager = ServiceManager::local_computer(
-        None::<&str>,
-        ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
-    )?;
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
 
     // Open the existing service
     let service = manager.open_service(name, ServiceAccess::QUERY_STATUS)?;
 
-    // Wait for the service to reach the target state
-    let start = std::time::Instant::now();
+    let mut last_checkpoint = None;
+    let mut last_progress = std::time::Instant::now();
     loop {
         let status = service.query_status()?;
         if status.current_state == target_state {
-            break;
+            return Ok(());
         }
-        if start.elapsed() > timeout {
+        let checkpoint = Some((status.current_state, status.checkpoint));
+        if checkpoint != last_checkpoint {
+            last_checkpoint = checkpoint;
+            last_progress = std::time::Instant::now();
+        }
+        if last_progress.elapsed() > timeout.max(status.wait_hint) {
             tracing::error!("Timeout waiting for service status to change");
             return Err(windows_service::Error::Winapi(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "operation timed out",
             )));
         }
-        std::thread::sleep(std::time::Duration::from_millis(250));
+        std::thread::sleep(Duration::from_millis(250));
     }
-    Ok(())
 }
 
 pub fn stop_service(name: &str) -> windows_service::Result<()> {

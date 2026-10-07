@@ -173,6 +173,23 @@ pub fn run_command(config: &RunConfig, env: &[(String, String)]) -> io::Result<C
     spawn_in_job(command, !config.logs.disabled)
 }
 
+/// Runs an auxiliary shell command line (stop command, hooks) with the
+/// working directory and environment of the wrapped process, logging its
+/// output.
+pub fn spawn_shell_command(
+    cmdline: &str,
+    config: &RunConfig,
+    env: &[(String, String)],
+) -> io::Result<ChildProcess> {
+    let shell = CommandSpec::Shell(cmdline.to_string());
+    let cmd_working_dir = find_working_dir(&config.command, config.working_dir.clone());
+    let mut command = build_command(&shell);
+    command
+        .envs(env.iter().map(|(k, v)| (k, v)))
+        .current_dir(cmd_working_dir);
+    spawn_in_job(command, true)
+}
+
 /// Spawns a process in a new Job Object, optionally forwarding its output to
 /// the log.
 pub fn spawn_in_job(mut command: Command, capture_output: bool) -> io::Result<ChildProcess> {
