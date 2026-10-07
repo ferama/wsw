@@ -1,5 +1,6 @@
 pub mod log_writer;
 pub mod logs;
+pub mod restart;
 #[cfg(windows)]
 pub mod runner;
 #[cfg(windows)]

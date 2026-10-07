@@ -1,4 +1,8 @@
-use std::{io, sync::OnceLock, time::Duration};
+use std::{
+    io,
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
 use tracing::{error, info};
 use windows::{
     Win32::System::Services::*,
@@ -19,6 +23,7 @@ use std::ffi::OsString;
 
 use crate::cli::LogRotation;
 
+use super::restart::Backoff;
 use super::runner::run_command;
 use super::stop_signal::StopSignal;
 
@@ -135,6 +140,11 @@ const START_WAIT_HINT: Duration = Duration::from_secs(10);
 const STOP_WAIT_HINT: Duration = Duration::from_secs(10);
 /// How often the child process is checked for exit.
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// Restart backoff: first delay, maximum delay and the uptime after which
+/// the child is considered stable and the backoff starts over.
+const RESTART_DELAY: Duration = Duration::from_secs(1);
+const RESTART_MAX_DELAY: Duration = Duration::from_secs(60);
+const RESTART_RESET_AFTER: Duration = Duration::from_secs(60);
 
 fn run_service(options: &RunOptions) -> windows_service::Result<()> {
     let stop = StopSignal::new();
@@ -156,8 +166,10 @@ fn run_service(options: &RunOptions) -> windows_service::Result<()> {
     let mut status = StatusReporter::new(event_handler);
     status.pending(ServiceState::StartPending, START_WAIT_HINT);
 
+    let mut backoff = Backoff::new(RESTART_DELAY, RESTART_MAX_DELAY, RESTART_RESET_AFTER);
     let mut first_start = true;
     while !stop.is_triggered() {
+        let started_at = Instant::now();
         let process = run_command(
             &options.cmd,
             options.working_dir.clone(),
@@ -174,7 +186,6 @@ fn run_service(options: &RunOptions) -> windows_service::Result<()> {
         match process {
             Err(e) => {
                 error!("Failed to start command: {}", e);
-                stop.wait_timeout(Duration::from_secs(5));
             }
             Ok(mut process) => {
                 info!("Child process started with PID: {}", process.id());
@@ -199,10 +210,17 @@ fn run_service(options: &RunOptions) -> windows_service::Result<()> {
                     info!("Stopping child process with PID: {}", process.id());
                 }
                 process.kill_tree();
-                if !stop.is_triggered() {
-                    stop.wait_timeout(Duration::from_secs(1));
-                }
             }
+        }
+
+        if !stop.is_triggered() {
+            let delay = backoff.next_delay(started_at.elapsed());
+            info!(
+                "Restarting in {:?} (consecutive failures: {})",
+                delay,
+                backoff.consecutive_failures()
+            );
+            stop.wait_timeout(delay);
         }
     }
 
