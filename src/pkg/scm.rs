@@ -240,15 +240,9 @@ impl InstalledService {
     /// The SCM settings as a configuration, to be layered with changes.
     /// The account is left out: its password cannot be read back.
     pub fn scm_config(&self) -> ServiceConfig {
-        let dependencies: Vec<String> = self
-            .scm
-            .dependencies
-            .iter()
-            .filter_map(|dependency| match dependency {
-                ServiceDependency::Service(name) => Some(name.to_string_lossy().to_string()),
-                ServiceDependency::Group(_) => None,
-            })
-            .collect();
+        // Groups keep their '+' prefix, so that ChangeServiceConfigW gets
+        // them back unchanged
+        let dependencies = dependency_names(&self.scm.dependencies);
         ServiceConfig {
             name: Some(self.name.clone()),
             display_name: Some(self.scm.display_name.to_string_lossy().to_string()),
@@ -359,8 +353,21 @@ pub fn update_service(name: &str, changes: &ServiceConfig) -> windows_service::R
         (name, password)
     });
 
-    let image_path =
-        crate::pkg::cmdline::join([installed.executable.as_str(), "run", "--name", name]);
+    // A legacy service may point to an older wsw.exe somewhere else, which
+    // would not understand the new ImagePath: migrate it to this executable
+    let executable = if installed.legacy {
+        std::env::current_exe()
+            .map_err(windows_service::Error::Winapi)?
+            .to_string_lossy()
+            .to_string()
+    } else {
+        installed.executable.clone()
+    };
+    let image_path = crate::pkg::cmdline::join([executable.as_str(), "run", "--name", name]);
+
+    // The configuration must be in the registry before the ImagePath stops
+    // carrying it, or a failure in between would leave the service unusable
+    registry::write_config(name, &runtime).map_err(windows_service::Error::Winapi)?;
     change_service_config(
         &service,
         &ConfigChange {
@@ -373,7 +380,6 @@ pub fn update_service(name: &str, changes: &ServiceConfig) -> windows_service::R
                 .map(|(name, password)| (name.as_str(), password.as_deref())),
         },
     )?;
-    registry::write_config(name, &runtime).map_err(windows_service::Error::Winapi)?;
 
     let account = match &account_change {
         Some(_) => scm.account_name.clone(),
