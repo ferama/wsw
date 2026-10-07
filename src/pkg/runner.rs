@@ -14,7 +14,14 @@ use windows_sys::Win32::System::JobObjects::{
     SetInformationJobObject,
 };
 
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+use std::os::windows::process::CommandExt;
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+};
+use windows_sys::Win32::System::Threading::{
+    CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+};
 
 use crate::pkg::config::{CommandSpec, RunConfig};
 use crate::pkg::log_writer::{LogWriter, OutputStream};
@@ -77,6 +84,62 @@ fn assign_to_job(job: &Job, child: &Child) -> io::Result<()> {
         )));
     }
     Ok(())
+}
+
+/// Resumes the threads of a process created with CREATE_SUSPENDED.
+/// `std::process::Child` does not expose the handle of the main thread, so
+/// the threads are found with a Toolhelp snapshot.
+fn resume_process(pid: u32) -> io::Result<()> {
+    // Safety: plain FFI call, the handle is checked and closed below.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    let snapshot = Handle(snapshot);
+
+    let mut entry = THREADENTRY32 {
+        dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+        ..Default::default()
+    };
+    let mut resumed = 0;
+    // Safety: `entry` is a properly sized THREADENTRY32.
+    let mut more = unsafe { Thread32First(snapshot.0, &mut entry) } != 0;
+    while more {
+        if entry.th32OwnerProcessID == pid {
+            // Safety: the thread handle is checked and closed right away.
+            unsafe {
+                let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                if !thread.is_null() {
+                    let thread = Handle(thread);
+                    if ResumeThread(thread.0) != u32::MAX {
+                        resumed += 1;
+                    }
+                }
+            }
+        }
+        // Safety: as above.
+        more = unsafe { Thread32Next(snapshot.0, &mut entry) } != 0;
+    }
+    if resumed == 0 {
+        return Err(io::Error::other(format!(
+            "cannot resume process {}: {}",
+            pid,
+            io::Error::last_os_error()
+        )));
+    }
+    Ok(())
+}
+
+/// Owned kernel handle, closed on drop.
+struct Handle(HANDLE);
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        // Safety: the handle is owned by this struct and closed only once.
+        unsafe {
+            CloseHandle(self.0);
+        }
+    }
 }
 
 /// A running child process together with the Job Object that owns its
@@ -212,13 +275,16 @@ pub fn spawn_in_job(mut command: Command, capture_output: bool) -> io::Result<Ch
         }
     };
 
+    // Started suspended and resumed only once in the Job: a process it
+    // spawns right away could otherwise escape the Job, and survive the stop
     let mut child = command
+        .creation_flags(CREATE_SUSPENDED)
         .stdin(Stdio::null())
         .stdout(output())
         .stderr(output())
         .spawn()?;
 
-    if let Err(e) = assign_to_job(&job, &child) {
+    if let Err(e) = assign_to_job(&job, &child).and_then(|_| resume_process(child.id())) {
         let _ = child.kill();
         let _ = child.wait();
         return Err(e);
