@@ -1270,7 +1270,7 @@ checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 
 [[package]]
 name = "wsw"
-version = "0.9.2"
+version = "0.10.0"
 dependencies = [
  "chrono",
  "clap",
