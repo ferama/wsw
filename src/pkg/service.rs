@@ -13,13 +13,13 @@ use windows_service::{
 };
 
 use windows_service::service::{
-    ServiceAccess, ServiceDependency, ServiceErrorControl, ServiceInfo, ServiceStartType,
+    Service, ServiceAccess, ServiceDependency, ServiceErrorControl, ServiceInfo, ServiceStartType,
 };
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
 use std::ffi::OsString;
 
-use super::config::{RunConfig, ScmSettings, ServiceConfig};
+use super::config::{RunConfig, ScmSettings, ServiceConfig, StartType};
 use super::registry;
 use super::restart::service_specific_code;
 use super::stop_signal::StopSignal;
@@ -213,7 +213,7 @@ pub fn install_service(config: &ServiceConfig, scm: &ScmSettings) -> windows_ser
         name: OsString::from(&name),
         display_name: OsString::from(get_service_desc(&name)),
         service_type: SERVICE_TYPE,
-        start_type: ServiceStartType::AutoStart,
+        start_type: scm_start_type(scm.start_type),
         error_control: ServiceErrorControl::Normal,
         executable_path,
         launch_arguments,
@@ -226,16 +226,37 @@ pub fn install_service(config: &ServiceConfig, scm: &ScmSettings) -> windows_ser
         account_password: scm.account_password.clone().map(OsString::from),
     };
 
-    let service = service_manager
-        .create_service(&service_info, ServiceAccess::START | ServiceAccess::DELETE)?;
+    let service = service_manager.create_service(
+        &service_info,
+        ServiceAccess::START | ServiceAccess::DELETE | ServiceAccess::CHANGE_CONFIG,
+    )?;
 
-    if let Err(e) = registry::write_config(&name, config) {
-        // Do not leave behind a service that cannot start
+    let configured = registry::write_config(&name, config)
+        .map_err(windows_service::Error::Winapi)
+        .and_then(|_| configure_service(&service, scm));
+    if let Err(e) = configured {
+        // Do not leave behind a half configured service
         let _ = service.delete();
-        return Err(windows_service::Error::Winapi(e));
+        return Err(e);
     }
 
-    service.start::<std::ffi::OsString>(&[])?;
+    if scm.start_type != StartType::Disabled {
+        service.start::<std::ffi::OsString>(&[])?;
+    }
+    Ok(())
+}
+
+fn scm_start_type(start_type: StartType) -> ServiceStartType {
+    match start_type {
+        StartType::Auto | StartType::DelayedAuto => ServiceStartType::AutoStart,
+        StartType::Manual => ServiceStartType::OnDemand,
+        StartType::Disabled => ServiceStartType::Disabled,
+    }
+}
+
+/// Applies the settings that are not part of CreateService/ChangeServiceConfig.
+fn configure_service(service: &Service, scm: &ScmSettings) -> windows_service::Result<()> {
+    service.set_delayed_auto_start(scm.start_type == StartType::DelayedAuto)?;
     Ok(())
 }
 

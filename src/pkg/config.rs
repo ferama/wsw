@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use clap::Args;
+use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
 use tracing_appender::rolling::Rotation;
 
@@ -51,6 +51,20 @@ impl From<LogRotation> for Rotation {
             LogRotation::Never => Rotation::NEVER,
         }
     }
+}
+
+/// When the SCM starts the service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum StartType {
+    /// Started at boot
+    Auto,
+    /// Started shortly after boot, once the other auto start services are running
+    DelayedAuto,
+    /// Started on demand only
+    Manual,
+    /// Cannot be started
+    Disabled,
 }
 
 /// Every option of a wsw service.
@@ -113,6 +127,11 @@ pub struct ServiceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_log_files: Option<usize>,
 
+    /// When the service is started [default: auto]
+    #[arg(long, value_enum)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_type: Option<StartType>,
+
     /// Service that must be running before this one starts, repeatable
     #[arg(long, value_name = "SERVICE")]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -156,6 +175,7 @@ impl ServiceConfig {
             disable_logs,
             log_rotation,
             max_log_files,
+            start_type,
             depends_on,
             account_name,
             account_password,
@@ -168,6 +188,7 @@ impl ServiceConfig {
     /// that they cannot get out of sync.
     pub fn runtime(&self) -> ServiceConfig {
         ServiceConfig {
+            start_type: None,
             depends_on: None,
             account_name: None,
             account_password: None,
@@ -235,6 +256,7 @@ impl ServiceConfig {
             _ => (None, None),
         };
         Ok(ScmSettings {
+            start_type: self.start_type.unwrap_or(StartType::Auto),
             depends_on: non_empty(self.depends_on.clone()),
             account_name,
             account_password,
@@ -245,6 +267,7 @@ impl ServiceConfig {
 /// Options stored by the SCM, validated.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScmSettings {
+    pub start_type: StartType,
     pub depends_on: Vec<String>,
     /// None for LocalSystem
     pub account_name: Option<String>,
@@ -430,6 +453,7 @@ mod tests {
             ..Default::default()
         };
         let scm = config.scm().unwrap();
+        assert_eq!(scm.start_type, StartType::Auto);
         assert_eq!(scm.depends_on, vec!["RedminePostgreSQL"]);
         assert_eq!(
             scm.account_name.as_deref(),
@@ -444,6 +468,21 @@ mod tests {
             ..Default::default()
         };
         assert!(user.scm().is_err());
+    }
+
+    #[test]
+    fn start_types() {
+        for (value, expected) in [
+            ("auto", StartType::Auto),
+            ("delayed-auto", StartType::DelayedAuto),
+            ("manual", StartType::Manual),
+            ("disabled", StartType::Disabled),
+        ] {
+            let config = parse_run(&["--start-type", value]);
+            assert_eq!(config.start_type, Some(expected));
+            let toml = config.to_toml().unwrap();
+            assert_eq!(toml.trim(), format!("start-type = \"{value}\""));
+        }
     }
 
     #[test]
