@@ -6,6 +6,7 @@ use tracing::info;
 
 use tracing_appender::rolling;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::{Registry, layer::SubscriberExt};
 
@@ -45,16 +46,36 @@ pub fn get_log_filename_prefix(name: &str) -> String {
     format!("{}.log", name)
 }
 
-pub fn setup_logging(name: &str, log_rotation: LogRotation, max_log_files: usize) -> WorkerGuard {
+/// Sets up console and file logging. Failures never abort the process: if
+/// the log file cannot be created wsw keeps running with console logging only.
+pub fn setup_logging(
+    name: &str,
+    log_rotation: LogRotation,
+    max_log_files: usize,
+) -> Option<WorkerGuard> {
     let log_path = get_log_dir();
 
     let file_appender = rolling::Builder::new()
         .filename_prefix(get_log_filename_prefix(name))
         .rotation(log_rotation.into())
         .max_log_files(max_log_files)
-        .build(&log_path)
-        .unwrap();
-    let (non_blocking_file, guard) = tracing_appender::non_blocking(file_appender); // Set up logging here if needed
+        .build(&log_path);
+
+    let (file_layer, guard) = match file_appender {
+        Ok(file_appender) => {
+            let (non_blocking_file, guard) = tracing_appender::non_blocking(file_appender);
+            let file_layer = fmt::layer()
+                .with_writer(non_blocking_file)
+                .with_target(false)
+                .with_timer(LocalTimer)
+                .with_ansi(false); // Disable ANSI escape codes
+            (Some(file_layer), Some(guard))
+        }
+        Err(e) => {
+            eprintln!("Failed to create log file in {:?}: {}", log_path, e);
+            (None, None)
+        }
+    };
 
     // Console layer (stderr by default, can also write to stdout)
     let console_layer = fmt::layer()
@@ -62,20 +83,15 @@ pub fn setup_logging(name: &str, log_rotation: LogRotation, max_log_files: usize
         .with_target(false)
         .with_timer(LocalTimer);
 
-    // File layer
-    let file_layer = fmt::layer()
-        .with_writer(non_blocking_file)
-        .with_target(false)
-        .with_timer(LocalTimer)
-        .with_ansi(false); // Disable ANSI escape codes
-
     // Set up subscriber with both layers
     let subscriber = Registry::default()
-        .with(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
+        .with(EnvFilter::from_default_env().add_directive(LevelFilter::INFO.into()))
         .with(console_layer)
         .with(file_layer);
 
-    tracing::subscriber::set_global_default(subscriber).expect("Failed to set up logging");
+    if let Err(e) = tracing::subscriber::set_global_default(subscriber) {
+        eprintln!("Failed to set up logging: {}", e);
+    }
 
     info!("Log path: {:?}", log_path);
 

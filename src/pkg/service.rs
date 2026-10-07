@@ -1,8 +1,7 @@
-use clap::Parser;
 use std::{
     io,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -10,10 +9,7 @@ use std::{
 };
 use tracing::{error, info};
 use windows::{
-    Win32::{
-        Foundation::{CloseHandle, HANDLE},
-        System::Services::*,
-    },
+    Win32::System::Services::*,
     core::{PCWSTR, PWSTR},
 };
 use windows_service::{
@@ -29,7 +25,7 @@ use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
 use std::ffi::OsString;
 
-use crate::cli::{Cli, Commands, LogRotation};
+use crate::cli::LogRotation;
 
 use super::runner::run_command;
 
@@ -44,112 +40,104 @@ pub fn get_service_desc(name: &str) -> String {
     }
 }
 
+/// Options used by the service entry point. They are resolved by the `run`
+/// command before the service dispatcher is started, so that `service_main`
+/// never has to parse the command line again (and never fails doing so).
+#[derive(Debug, Clone)]
+pub struct RunOptions {
+    pub name: String,
+    pub cmd: String,
+    pub working_dir: Option<String>,
+    pub disable_logs: bool,
+}
+
+static RUN_OPTIONS: OnceLock<RunOptions> = OnceLock::new();
+
+pub fn set_run_options(options: RunOptions) {
+    let _ = RUN_OPTIONS.set(options);
+}
+
 pub fn service_main(_args: Vec<OsString>) {
-    let cli = Cli::parse();
-    let cmd_arg;
-    let svc_name_arg;
-    let working_dir_arg: Option<String>;
-    let no_logs: bool;
-
-    match cli.command {
-        Some(Commands::Run {
-            cmd,
-            working_dir,
-            name,
-            disable_logs,
-            log_rotation: _,
-            max_log_files: _,
-        }) => {
-            cmd_arg = cmd.clone();
-            svc_name_arg = name;
-            working_dir_arg = working_dir;
-            no_logs = disable_logs;
-        }
-        _ => {
-            panic!("Service main called without --cmd argument");
-        }
+    let Some(options) = RUN_OPTIONS.get() else {
+        error!("Service started without run options");
+        return;
+    };
+    if let Err(e) = run_service(options) {
+        error!("Service '{}' failed: {}", options.name, e);
     }
+}
 
+fn run_service(options: &RunOptions) -> windows_service::Result<()> {
     let running = Arc::new(AtomicBool::new(true));
     let stop_flag = running.clone();
 
     let event_handler =
-        service_control_handler::register(svc_name_arg, move |control_event| match control_event {
-            ServiceControl::Stop => {
-                stop_flag.store(false, Ordering::SeqCst);
-                ServiceControlHandlerResult::NoError
-            }
-            _ => ServiceControlHandlerResult::NotImplemented,
-        })
-        .unwrap();
+        service_control_handler::register(
+            &options.name,
+            move |control_event| match control_event {
+                ServiceControl::Stop => {
+                    stop_flag.store(false, Ordering::SeqCst);
+                    ServiceControlHandlerResult::NoError
+                }
+                _ => ServiceControlHandlerResult::NotImplemented,
+            },
+        )?;
 
-    event_handler
-        .set_service_status(ServiceStatus {
-            service_type: SERVICE_TYPE,
-            current_state: ServiceState::Running,
-            controls_accepted: ServiceControlAccept::STOP,
-            exit_code: ServiceExitCode::Win32(0),
-            checkpoint: 0,
-            wait_hint: Duration::default(),
-            process_id: None,
-        })
-        .unwrap();
+    event_handler.set_service_status(ServiceStatus {
+        service_type: SERVICE_TYPE,
+        current_state: ServiceState::Running,
+        controls_accepted: ServiceControlAccept::STOP,
+        exit_code: ServiceExitCode::Win32(0),
+        checkpoint: 0,
+        wait_hint: Duration::default(),
+        process_id: None,
+    })?;
 
-    let running_bg = Arc::clone(&running);
-
-    while running_bg.load(Ordering::SeqCst) {
-        match run_command(&cmd_arg, working_dir_arg.clone(), no_logs) {
+    while running.load(Ordering::SeqCst) {
+        match run_command(
+            &options.cmd,
+            options.working_dir.clone(),
+            options.disable_logs,
+        ) {
             Err(e) => {
                 error!("Failed to start command: {}", e);
                 thread::sleep(Duration::from_secs(5));
             }
             Ok(mut process) => {
-                info!("Child process started with PID: {}", process.1.id());
+                info!("Child process started with PID: {}", process.id());
 
                 // Poll for shutdown
-                while running_bg.load(Ordering::SeqCst) {
+                while running.load(Ordering::SeqCst) {
                     thread::sleep(Duration::from_secs(1));
-                    let exited = {
-                        match process.1.try_wait() {
-                            Ok(Some(status)) => {
-                                error!("Child exited with status: {}", status);
-                                true
-                            }
-                            Ok(None) => false,
-                            Err(e) => {
-                                info!("Failed to check child status: {}", e);
-                                true
-                            }
+                    match process.child.try_wait() {
+                        Ok(Some(status)) => {
+                            error!("Child exited with status: {}", status);
+                            break;
                         }
-                    };
-                    if exited {
-                        break;
+                        Ok(None) => {}
+                        Err(e) => {
+                            info!("Failed to check child status: {}", e);
+                            break;
+                        }
                     }
                 }
 
-                let _ = process.1.kill();
-                unsafe {
-                    if let Err(e) = CloseHandle(HANDLE(process.0)) {
-                        error!("Failed to close handle: {:?}", e);
-                    }
-                }
+                process.kill_tree();
                 thread::sleep(Duration::from_secs(1));
             }
         }
     }
 
     // Update status before exiting
-    event_handler
-        .set_service_status(ServiceStatus {
-            service_type: SERVICE_TYPE,
-            current_state: ServiceState::Stopped,
-            controls_accepted: ServiceControlAccept::empty(),
-            exit_code: ServiceExitCode::Win32(0),
-            checkpoint: 0,
-            wait_hint: Duration::default(),
-            process_id: None,
-        })
-        .expect("set service stopped");
+    event_handler.set_service_status(ServiceStatus {
+        service_type: SERVICE_TYPE,
+        current_state: ServiceState::Stopped,
+        controls_accepted: ServiceControlAccept::empty(),
+        exit_code: ServiceExitCode::Win32(0),
+        checkpoint: 0,
+        wait_hint: Duration::default(),
+        process_id: None,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -166,7 +154,7 @@ pub fn install_service(
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
 
-    let executable_path = std::env::current_exe().unwrap();
+    let executable_path = std::env::current_exe().map_err(windows_service::Error::Winapi)?;
 
     let mut launch_arguments = vec![
         OsString::from("run"),
