@@ -17,7 +17,7 @@ use windows_service::{
         ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
         ServiceType,
     },
-    service_control_handler::{self, ServiceControlHandlerResult},
+    service_control_handler::{self, ServiceControlHandlerResult, ServiceStatusHandle},
 };
 
 use windows_service::service::{ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType};
@@ -67,6 +67,78 @@ pub fn service_main(_args: Vec<OsString>) {
     }
 }
 
+/// Reports the service state to the SCM, keeping track of the checkpoint
+/// counter required by the pending states.
+struct StatusReporter {
+    handle: ServiceStatusHandle,
+    checkpoint: u32,
+}
+
+impl StatusReporter {
+    fn new(handle: ServiceStatusHandle) -> Self {
+        Self {
+            handle,
+            checkpoint: 0,
+        }
+    }
+
+    /// Reports a pending state. Every call bumps the checkpoint, telling the
+    /// SCM that progress is being made and the wait hint starts over.
+    fn pending(&mut self, state: ServiceState, wait_hint: Duration) {
+        self.checkpoint += 1;
+        self.set(
+            state,
+            ServiceControlAccept::empty(),
+            ServiceExitCode::Win32(0),
+            wait_hint,
+        );
+    }
+
+    fn running(&mut self) {
+        self.checkpoint = 0;
+        self.set(
+            ServiceState::Running,
+            ServiceControlAccept::STOP,
+            ServiceExitCode::Win32(0),
+            Duration::default(),
+        );
+    }
+
+    fn stopped(&mut self, exit_code: ServiceExitCode) {
+        self.checkpoint = 0;
+        self.set(
+            ServiceState::Stopped,
+            ServiceControlAccept::empty(),
+            exit_code,
+            Duration::default(),
+        );
+    }
+
+    fn set(
+        &self,
+        state: ServiceState,
+        controls_accepted: ServiceControlAccept,
+        exit_code: ServiceExitCode,
+        wait_hint: Duration,
+    ) {
+        let status = ServiceStatus {
+            service_type: SERVICE_TYPE,
+            current_state: state,
+            controls_accepted,
+            exit_code,
+            checkpoint: self.checkpoint,
+            wait_hint,
+            process_id: None,
+        };
+        if let Err(e) = self.handle.set_service_status(status) {
+            error!("Failed to report service state {:?}: {}", state, e);
+        }
+    }
+}
+
+/// How long the SCM should wait for the service to leave the start pending state.
+const START_WAIT_HINT: Duration = Duration::from_secs(10);
+
 fn run_service(options: &RunOptions) -> windows_service::Result<()> {
     let running = Arc::new(AtomicBool::new(true));
     let stop_flag = running.clone();
@@ -79,26 +151,30 @@ fn run_service(options: &RunOptions) -> windows_service::Result<()> {
                     stop_flag.store(false, Ordering::SeqCst);
                     ServiceControlHandlerResult::NoError
                 }
+                ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
                 _ => ServiceControlHandlerResult::NotImplemented,
             },
         )?;
 
-    event_handler.set_service_status(ServiceStatus {
-        service_type: SERVICE_TYPE,
-        current_state: ServiceState::Running,
-        controls_accepted: ServiceControlAccept::STOP,
-        exit_code: ServiceExitCode::Win32(0),
-        checkpoint: 0,
-        wait_hint: Duration::default(),
-        process_id: None,
-    })?;
+    let mut status = StatusReporter::new(event_handler);
+    status.pending(ServiceState::StartPending, START_WAIT_HINT);
 
+    let mut first_start = true;
     while running.load(Ordering::SeqCst) {
-        match run_command(
+        let process = run_command(
             &options.cmd,
             options.working_dir.clone(),
             options.disable_logs,
-        ) {
+        );
+
+        // Only report Running once the child had its chance to start. A start
+        // failure is not fatal: the loop keeps retrying, as it always did.
+        if first_start {
+            first_start = false;
+            status.running();
+        }
+
+        match process {
             Err(e) => {
                 error!("Failed to start command: {}", e);
                 thread::sleep(Duration::from_secs(5));
@@ -128,16 +204,8 @@ fn run_service(options: &RunOptions) -> windows_service::Result<()> {
         }
     }
 
-    // Update status before exiting
-    event_handler.set_service_status(ServiceStatus {
-        service_type: SERVICE_TYPE,
-        current_state: ServiceState::Stopped,
-        controls_accepted: ServiceControlAccept::empty(),
-        exit_code: ServiceExitCode::Win32(0),
-        checkpoint: 0,
-        wait_hint: Duration::default(),
-        process_id: None,
-    })
+    status.stopped(ServiceExitCode::Win32(0));
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
