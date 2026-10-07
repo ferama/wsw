@@ -6,6 +6,8 @@ use std::iter::once;
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
+
+use crate::pkg::account::lookup_account_name;
 use windows_sys::Win32::Security::Authentication::Identity::{
     LSA_HANDLE, LSA_OBJECT_ATTRIBUTES, LSA_UNICODE_STRING, LsaAddAccountRights, LsaClose,
     LsaNtStatusToWinError, LsaOpenPolicy, POLICY_CREATE_ACCOUNT, POLICY_LOOKUP_NAMES,
@@ -26,18 +28,9 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(once(0)).collect()
 }
 
-/// Name to look the account up with: LookupAccountName does not understand
-/// the `.\user` notation used by the SCM for local accounts.
-fn lookup_name(account: Option<&str>) -> String {
-    match account {
-        None => r"NT AUTHORITY\SYSTEM".to_string(),
-        Some(account) => account.strip_prefix(r".\").unwrap_or(account).to_string(),
-    }
-}
-
 /// Resolves an account name (None for LocalSystem) to its SID.
 fn account_sid(account: Option<&str>) -> io::Result<Vec<u8>> {
-    let name = lookup_name(account);
+    let name = lookup_account_name(account);
     let wide_name = wide(&name);
     let mut sid_size: u32 = 0;
     let mut domain_size: u32 = 0;

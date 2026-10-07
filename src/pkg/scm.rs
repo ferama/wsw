@@ -18,7 +18,7 @@ use windows_sys::Win32::System::Services::{
     SERVICE_DELAYED_AUTO_START_INFO, SERVICE_DESCRIPTIONW, SERVICE_NO_CHANGE,
 };
 
-use crate::pkg::account::{AccountKind, scm_account_name};
+use crate::pkg::account::{AccountKind, change_config_password, scm_account_name};
 use crate::pkg::config::{ScmSettings, ServiceConfig, StartType};
 use crate::pkg::registry;
 use crate::pkg::restart::ScmAction;
@@ -113,7 +113,8 @@ struct ConfigChange<'a> {
     start_type: ServiceStartType,
     dependencies: &'a [String],
     display_name: &'a str,
-    /// Account and password, None to leave them unchanged
+    /// Account and password (None for a NULL password), None to leave
+    /// them unchanged
     account: Option<(&'a str, Option<&'a str>)>,
 }
 
@@ -131,10 +132,7 @@ fn change_service_config(service: &Service, change: &ConfigChange) -> windows_se
         dependencies.push(0);
     }
     let account = change.account.map(|(name, _)| wide(name));
-    // Accounts without password (built-in, virtual, gMSA) need an empty one
-    let password = change
-        .account
-        .map(|(_, password)| wide(password.unwrap_or("")));
+    let password = change.account.and_then(|(_, password)| password).map(wide);
 
     // Safety: every string is a nul terminated buffer that outlives the call.
     let ok = unsafe {
@@ -320,6 +318,12 @@ pub fn update_service(name: &str, changes: &ServiceConfig) -> windows_service::R
 
     let mut changes = changes.clone();
     changes.name = Some(name.to_string());
+    // A blank account means the default one, as with install
+    if let Some(account) = &changes.account_name
+        && account.trim().is_empty()
+    {
+        changes.account_name = Some("LocalSystem".to_string());
+    }
 
     // Runtime configuration
     let runtime = installed.runtime.clone().merge(changes.runtime());
@@ -338,12 +342,21 @@ pub fn update_service(name: &str, changes: &ServiceConfig) -> windows_service::R
     .scm()
     .map_err(invalid)?;
 
+    let mut scm = scm;
+    if changes.account_name.is_none() && changes.grant_logon_right == Some(true) {
+        // The account does not change: grant the right to the current one
+        scm.grant_logon_right = installed
+            .account()
+            .is_some_and(|account| !AccountKind::classify(&account).has_implicit_logon_right());
+    }
+
     let account_change = changes.account_name.as_ref().map(|account| {
         let name = match AccountKind::classify(account) {
             AccountKind::LocalSystem => "LocalSystem".to_string(),
             _ => scm.account_name.clone().unwrap_or_default(),
         };
-        (name, scm.account_password.clone())
+        let password = change_config_password(account, scm.account_password.clone());
+        (name, password)
     });
 
     let image_path =

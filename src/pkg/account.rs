@@ -64,6 +64,39 @@ pub fn scm_account_name(account: &str) -> Option<String> {
     }
 }
 
+/// Name to resolve the account SID with. LookupAccountName knows the
+/// built-in accounts only by their LSA names (`NT AUTHORITY\NETWORK SERVICE`,
+/// with the space, not the `NetworkService` spelling the SCM accepts) and
+/// does not understand the `.\user` notation for local users.
+/// `account` is None for LocalSystem.
+pub fn lookup_account_name(account: Option<&str>) -> String {
+    let Some(account) = account else {
+        return r"NT AUTHORITY\SYSTEM".to_string();
+    };
+    match AccountKind::classify(account) {
+        AccountKind::LocalSystem => r"NT AUTHORITY\SYSTEM".to_string(),
+        AccountKind::LocalService => r"NT AUTHORITY\LOCAL SERVICE".to_string(),
+        AccountKind::NetworkService => r"NT AUTHORITY\NETWORK SERVICE".to_string(),
+        _ => {
+            let account = account.trim();
+            account.strip_prefix(r".\").unwrap_or(account).to_string()
+        }
+    }
+}
+
+/// Password to hand to ChangeServiceConfig when switching to `account`:
+/// empty for the built-in accounts, NULL (None) for virtual accounts and
+/// gMSA, as the documentation requires, the given one for users.
+pub fn change_config_password(account: &str, password: Option<String>) -> Option<String> {
+    match AccountKind::classify(account) {
+        AccountKind::LocalSystem | AccountKind::LocalService | AccountKind::NetworkService => {
+            Some(String::new())
+        }
+        AccountKind::Virtual | AccountKind::ManagedService => None,
+        AccountKind::User => password,
+    }
+}
+
 /// Validates an account/password pair, returning the password to hand to
 /// the SCM. Passwords given for accounts that have none are dropped.
 pub fn resolve_password(account: &str, password: Option<String>) -> Result<Option<String>, String> {
@@ -141,6 +174,46 @@ mod tests {
             Some(r"NT SERVICE\Redmine")
         );
         assert_eq!(scm_account_name(r".\marco").as_deref(), Some(r".\marco"));
+    }
+
+    #[test]
+    fn lookup_names() {
+        assert_eq!(lookup_account_name(None), r"NT AUTHORITY\SYSTEM");
+        assert_eq!(
+            lookup_account_name(Some("LocalSystem")),
+            r"NT AUTHORITY\SYSTEM"
+        );
+        assert_eq!(
+            lookup_account_name(Some(r"NT AUTHORITY\NetworkService")),
+            r"NT AUTHORITY\NETWORK SERVICE"
+        );
+        assert_eq!(
+            lookup_account_name(Some("LocalService")),
+            r"NT AUTHORITY\LOCAL SERVICE"
+        );
+        assert_eq!(lookup_account_name(Some(r".\marco")), "marco");
+        assert_eq!(
+            lookup_account_name(Some(r"NT SERVICE\Redmine")),
+            r"NT SERVICE\Redmine"
+        );
+    }
+
+    #[test]
+    fn change_config_passwords() {
+        assert_eq!(
+            change_config_password("NetworkService", None),
+            Some(String::new())
+        );
+        assert_eq!(
+            change_config_password("LocalSystem", None),
+            Some(String::new())
+        );
+        assert_eq!(change_config_password(r"NT SERVICE\x", None), None);
+        assert_eq!(change_config_password(r"CONTOSO\gmsa$", None), None);
+        assert_eq!(
+            change_config_password(r".\marco", Some("pw".into())),
+            Some("pw".into())
+        );
     }
 
     #[test]
