@@ -113,8 +113,10 @@ impl LineBuffer {
         match self.encoding {
             StreamEncoding::Utf16Le => self
                 .buf
-                .chunks_exact(2)
-                .position(|unit| unit == [b'\n', 0])
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .position(|unit| *unit == [b'\n', 0])
                 .map(|i| i * 2 + 2),
             _ => self.buf.iter().position(|&b| b == b'\n').map(|i| i + 1),
         }
@@ -144,8 +146,10 @@ impl LineBuffer {
         let text = match self.encoding {
             StreamEncoding::Utf16Le => {
                 let units: Vec<u16> = raw
-                    .chunks_exact(2)
-                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|pair| u16::from_le_bytes(*pair))
                     .collect();
                 String::from_utf16_lossy(&units)
             }

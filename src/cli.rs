@@ -209,7 +209,9 @@ mod tests {
         }
 
         // Grouped short flags
-        let run = service_config(&["install", "-dc", "app.exe"]).resolve().unwrap();
+        let run = service_config(&["install", "-dc", "app.exe"])
+            .resolve()
+            .unwrap();
         assert!(run.logs.disabled);
         assert_eq!(run.command, CommandSpec::Shell("app.exe".into()));
 

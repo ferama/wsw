@@ -31,7 +31,7 @@ pub fn handle(name: &str, verbose: bool) {
             }
 
             if let Ok(commandline) = get_service_command_line(name) {
-                table.add_row(row!["FullCmd", format!("{}", commandline)]);
+                table.add_row(row!["FullCmd", commandline.to_string()]);
             }
 
             if status.current_state == ServiceState::Stopped {
