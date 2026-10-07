@@ -16,6 +16,7 @@
 
 use std::io;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use windows_sys::Win32::System::Console::{
     AttachConsole, CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT, FreeConsole,
@@ -27,16 +28,36 @@ use crate::pkg::stop_signal::StopSignal;
 
 /// Triggered by Ctrl+C when running in the foreground.
 static FOREGROUND_STOP: OnceLock<StopSignal> = OnceLock::new();
+/// Triggered once the foreground supervisor has stopped.
+static FOREGROUND_DONE: OnceLock<StopSignal> = OnceLock::new();
+
+/// Windows terminates the process as soon as the handler returns from a
+/// close event, and at most 5 seconds after it was raised.
+const CLOSE_GRACE: Duration = Duration::from_millis(4500);
 
 unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
     match ctrl_type {
         CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT => {
             if let Some(stop) = FOREGROUND_STOP.get() {
                 stop.trigger();
+                // The console window is being closed: give the supervisor the
+                // time to stop the process in an orderly way
+                if ctrl_type == CTRL_CLOSE_EVENT
+                    && let Some(done) = FOREGROUND_DONE.get()
+                {
+                    done.wait_timeout(CLOSE_GRACE);
+                }
             }
             1
         }
         _ => 0,
+    }
+}
+
+/// Tells a pending console close that the foreground supervisor stopped.
+pub fn foreground_stopped() {
+    if let Some(done) = FOREGROUND_DONE.get() {
+        done.trigger();
     }
 }
 
@@ -45,10 +66,18 @@ unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> BOOL {
 pub fn install_ctrl_handler(foreground_stop: Option<StopSignal>) -> io::Result<()> {
     if let Some(stop) = foreground_stop {
         let _ = FOREGROUND_STOP.set(stop);
+        let _ = FOREGROUND_DONE.set(StopSignal::new());
     }
-    // Safety: the handler is a plain function that lives for the whole process.
-    if unsafe { SetConsoleCtrlHandler(Some(ctrl_handler), 1) } == 0 {
-        return Err(io::Error::last_os_error());
+    // Safety: plain FFI calls, the handler is a function that lives for the
+    // whole process.
+    unsafe {
+        // wsw may have been started with Ctrl+C ignored (e.g. by a launcher
+        // using CREATE_NEW_PROCESS_GROUP): the attribute is inherited by the
+        // wrapped process, which would then ignore the graceful stop
+        SetConsoleCtrlHandler(None, 0);
+        if SetConsoleCtrlHandler(Some(ctrl_handler), 1) == 0 {
+            return Err(io::Error::last_os_error());
+        }
     }
     Ok(())
 }

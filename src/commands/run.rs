@@ -85,7 +85,9 @@ fn run_foreground(config: &RunConfig) -> i32 {
     if let Err(e) = console::install_ctrl_handler(Some(stop.clone())) {
         tracing::error!("Failed to install the console control handler: {}", e);
     }
-    match supervise(config, &stop, &mut ForegroundStatus, true) {
+    let outcome = supervise(config, &stop, &mut ForegroundStatus, true);
+    console::foreground_stopped();
+    match outcome {
         Outcome::Stopped => 0,
         Outcome::Exited(code) => code.unwrap_or(1),
         Outcome::GaveUp(code) => service_specific_code(code) as i32,
