@@ -3,7 +3,7 @@ use std::str::FromStr;
 use clap::{Parser, Subcommand};
 use tracing_appender::rolling::Rotation;
 
-use crate::pkg::service::SERVICE_DESCRIPTION_PREFIX;
+use crate::pkg::SERVICE_DESCRIPTION_PREFIX;
 
 #[derive(Debug, Clone)]
 pub enum LogRotation {

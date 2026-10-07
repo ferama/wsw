@@ -34,7 +34,7 @@ use crate::cli::{Cli, Commands, LogRotation};
 use super::runner::run_command;
 
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
-pub const SERVICE_DESCRIPTION_PREFIX: &str = "wsw";
+pub use super::SERVICE_DESCRIPTION_PREFIX;
 
 pub fn get_service_desc(name: &str) -> String {
     if name == SERVICE_DESCRIPTION_PREFIX {

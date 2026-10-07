@@ -1,12 +1,27 @@
+// Only the platform independent parts of wsw are compiled on other hosts,
+// so that their unit tests can run anywhere.
+#![cfg_attr(not(windows), allow(dead_code))]
+
+#[cfg(windows)]
 use clap::CommandFactory;
+#[cfg(windows)]
 use clap::Parser;
 
 mod cli;
+#[cfg(windows)]
 mod commands;
 mod pkg;
 
+#[cfg(windows)]
 use cli::*;
 
+#[cfg(not(windows))]
+fn main() {
+    eprintln!("wsw only runs on Windows.");
+    std::process::exit(1);
+}
+
+#[cfg(windows)]
 fn main() {
     let cli = Cli::parse();
     // If parsing fails, clap will print the error and exit

@@ -16,6 +16,10 @@ tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 which = "8.0.2"
+encoding_rs = "0.8"
+regex = "1.12.3"
+
+[target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
     "Win32_System_Services",
 ] }
@@ -27,8 +31,6 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 windows-service = "0.8.1"
-encoding_rs = "0.8"
-regex = "1.12.3"
 
 [profile.release]
 opt-level = 2
