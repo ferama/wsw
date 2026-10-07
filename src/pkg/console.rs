@@ -4,11 +4,12 @@
 //! A service has no console, so the wrapped (console) process gets a console
 //! of its own when it is started. To stop it, wsw temporarily attaches to
 //! that console, generates a Ctrl+C for every process attached to it and
-//! detaches again. wsw itself must survive the event it generates: a handler
-//! that swallows Ctrl+C and Ctrl+Break is registered once at startup. A
-//! handler routine is used instead of `SetConsoleCtrlHandler(NULL, TRUE)`,
-//! because the latter would be inherited by the processes started later,
-//! which would then ignore Ctrl+C themselves.
+//! detaches again. wsw itself must survive the event it generates: it
+//! ignores Ctrl+C (`SetConsoleCtrlHandler(NULL, TRUE)`) from right after
+//! attaching until the wrapped process exited, then restores the normal
+//! handling, since the attribute would be inherited by the processes started
+//! later, which would then ignore Ctrl+C themselves. A handler routine that
+//! swallows Ctrl+C is registered at startup too, as a second line of defence.
 //!
 //! When wsw runs in the foreground (`wsw run` from a terminal) the wrapped
 //! process shares the terminal and receives Ctrl+C directly; the handler then
@@ -16,7 +17,7 @@
 
 use std::io;
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows_sys::Win32::System::Console::{
     AttachConsole, CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT, FreeConsole,
@@ -82,10 +83,40 @@ pub fn install_ctrl_handler(foreground_stop: Option<StopSignal>) -> io::Result<(
     Ok(())
 }
 
+/// Keeps wsw ignoring Ctrl+C while a Ctrl+C it generated is being
+/// delivered. Dropping it restores the normal handling.
+pub struct IgnoreCtrlC {
+    sent_at: Instant,
+}
+
+/// The Ctrl+C is delivered asynchronously, by a thread the console creates
+/// in every attached process: wsw keeps ignoring it at least this long.
+const DELIVERY_GRACE: Duration = Duration::from_secs(1);
+
+impl Drop for IgnoreCtrlC {
+    fn drop(&mut self) {
+        let elapsed = self.sent_at.elapsed();
+        if elapsed < DELIVERY_GRACE {
+            std::thread::sleep(DELIVERY_GRACE - elapsed);
+        }
+        // Safety: plain FFI call. The "ignore Ctrl+C" attribute is inherited
+        // by the processes started later: it must not outlive the stop.
+        unsafe {
+            SetConsoleCtrlHandler(None, 0);
+        }
+    }
+}
+
 /// Sends Ctrl+C to the console of the process `pid`, reaching every
 /// process attached to it. Must not be used while wsw has a console of its
 /// own (foreground mode).
-pub fn send_ctrl_c(pid: u32) -> io::Result<()> {
+///
+/// wsw is attached to that console while the event is generated, so it
+/// receives the Ctrl+C too: it ignores it (`SetConsoleCtrlHandler(NULL,
+/// TRUE)`, set after attaching, as WinSW does) until the returned guard is
+/// dropped. Keep the guard until the wrapped process exited or the stop
+/// timeout expired, and drop it before starting any other process.
+pub fn send_ctrl_c(pid: u32) -> io::Result<IgnoreCtrlC> {
     // Safety: plain FFI calls without pointers.
     unsafe {
         // A process can be attached to a single console at a time
@@ -97,6 +128,10 @@ pub fn send_ctrl_c(pid: u32) -> io::Result<()> {
                 io::Error::last_os_error()
             )));
         }
+        let guard = IgnoreCtrlC {
+            sent_at: Instant::now(),
+        };
+        SetConsoleCtrlHandler(None, 1);
         let sent = GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0);
         let error = io::Error::last_os_error();
         FreeConsole();
@@ -106,6 +141,6 @@ pub fn send_ctrl_c(pid: u32) -> io::Result<()> {
                 pid, error
             )));
         }
+        Ok(guard)
     }
-    Ok(())
 }
