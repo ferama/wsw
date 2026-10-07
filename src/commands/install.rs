@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::{
     cli::ServiceConfig,
     pkg::config::StartType,
@@ -6,7 +8,14 @@ use crate::{
 use windows_service::Error;
 use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
 
-pub fn handle(config: ServiceConfig) {
+pub fn handle(config_file: Option<PathBuf>, config: ServiceConfig) {
+    let config = match config.with_file(config_file.as_deref()) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("Invalid configuration: {e}");
+            std::process::exit(1);
+        }
+    };
     let name = config.service_name();
     let run_config = match config.resolve() {
         Ok(run_config) => run_config,

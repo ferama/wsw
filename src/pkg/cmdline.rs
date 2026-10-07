@@ -43,8 +43,6 @@ pub fn join<'a>(args: impl IntoIterator<Item = &'a str>) -> String {
 }
 
 /// Splits a command line into arguments like `CommandLineToArgvW`.
-// Only used by the tests until the ImagePath of legacy services is parsed
-#[allow(dead_code)]
 ///
 /// The first argument (the program name) follows simpler rules: it extends
 /// up to the next whitespace, or up to the closing quote if it starts with

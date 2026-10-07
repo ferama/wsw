@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 use crate::pkg::SERVICE_DESCRIPTION_PREFIX;
@@ -57,6 +59,9 @@ pub enum Commands {
         /// Name of the service to start
         #[arg(long, short, default_value_t = String::from(SERVICE_DESCRIPTION_PREFIX))]
         name: String,
+        /// Also show the whole effective configuration of the service
+        #[arg(long, short, default_value_t = false)]
+        verbose: bool,
     },
     /// Restart a service
     #[command()]
@@ -68,6 +73,25 @@ pub enum Commands {
     /// Install and start the Windows service
     #[command(visible_alias = "i")]
     Install {
+        /// TOML file with the service options, named like the flags
+        /// (e.g. working-dir = 'C:\app'). Command line flags take precedence
+        #[arg(long = "config", value_name = "PATH")]
+        config_file: Option<PathBuf>,
+
+        #[command(flatten)]
+        config: ServiceConfig,
+    },
+    /// Change the configuration of an installed service, without
+    /// reinstalling it. Only the given options change; list options (--env,
+    /// --depends-on...) are replaced as a whole and cleared by an empty
+    /// value. Restart the service to apply the changes
+    #[command(visible_alias = "reconfigure")]
+    Update {
+        /// TOML file with the options to change, named like the flags.
+        /// Command line flags take precedence
+        #[arg(long = "config", value_name = "PATH")]
+        config_file: Option<PathBuf>,
+
         #[command(flatten)]
         config: ServiceConfig,
     },
@@ -82,6 +106,10 @@ pub enum Commands {
     /// This command is not intended to be called directly from the command line
     #[command(hide = true)]
     Run {
+        /// TOML file with the service options
+        #[arg(long = "config", value_name = "PATH")]
+        config_file: Option<PathBuf>,
+
         #[command(flatten)]
         config: ServiceConfig,
     },
@@ -95,5 +123,31 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn update_accepts_service_options() {
+        let cli = Cli::try_parse_from([
+            "wsw",
+            "update",
+            "--name",
+            "Redmine",
+            "--config",
+            "redmine.toml",
+            "--stop-timeout",
+            "30",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Commands::Update {
+                config_file,
+                config,
+            }) => {
+                assert_eq!(config_file, Some(PathBuf::from("redmine.toml")));
+                assert_eq!(config.name.as_deref(), Some("Redmine"));
+                assert_eq!(config.stop_timeout, Some(30));
+            }
+            _ => panic!("not an update command"),
+        }
     }
 }

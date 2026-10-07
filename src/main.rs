@@ -35,11 +35,21 @@ fn main() {
         Some(Commands::List) => commands::list::handle(),
         Some(Commands::Start { name }) => commands::start::handle(&name),
         Some(Commands::Stop { name }) => commands::stop::handle(&name),
-        Some(Commands::Status { name }) => commands::status::handle(&name),
+        Some(Commands::Status { name, verbose }) => commands::status::handle(&name, verbose),
         Some(Commands::Restart { name }) => commands::restart::handle(&name),
-        Some(Commands::Install { config }) => commands::install::handle(config),
+        Some(Commands::Install {
+            config_file,
+            config,
+        }) => commands::install::handle(config_file, config),
+        Some(Commands::Update {
+            config_file,
+            config,
+        }) => commands::update::handle(config_file, config),
         Some(Commands::Uninstall { name }) => commands::uninstall::handle(&name),
-        Some(Commands::Run { config }) => commands::run::handle(config),
+        Some(Commands::Run {
+            config_file,
+            config,
+        }) => commands::run::handle(config_file, config),
         None => {
             Cli::command().print_help().unwrap();
             std::process::exit(0);

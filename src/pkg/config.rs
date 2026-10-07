@@ -1,10 +1,11 @@
 use std::str::FromStr;
 use std::time::Duration;
 
-use clap::{Args, ValueEnum};
+use clap::{Args, Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
 use tracing_appender::rolling::Rotation;
 
+use crate::cli::{Cli, Commands};
 use crate::pkg::SERVICE_DESCRIPTION_PREFIX;
 use crate::pkg::account::{self, AccountKind};
 use crate::pkg::restart::{self, RestartConfig, RestartPolicy, ScmAction};
@@ -346,6 +347,37 @@ impl ServiceConfig {
         }
     }
 
+    /// Parses the ImagePath of a wsw service, returning the path of wsw and
+    /// the options passed to `run`. For services installed by older versions
+    /// these are the whole runtime configuration; newer ones only carry the
+    /// name (the rest is in the registry).
+    pub fn from_image_path(image_path: &str) -> Option<(String, ServiceConfig)> {
+        let argv = cmdline::split(image_path);
+        let executable = argv.first()?.clone();
+        if argv.get(1).map(String::as_str) != Some("run") {
+            return None;
+        }
+        match Cli::try_parse_from(&argv).ok()?.command {
+            Some(Commands::Run { config, .. }) => Some((executable, config)),
+            _ => None,
+        }
+    }
+
+    /// Loads a TOML configuration file (`--config`).
+    pub fn from_file(path: &std::path::Path) -> Result<ServiceConfig, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read '{}': {}", path.display(), e))?;
+        Self::from_toml(&text).map_err(|e| format!("invalid '{}': {}", path.display(), e))
+    }
+
+    /// Layers the command line options over the configuration file, if any.
+    pub fn with_file(self, config_file: Option<&std::path::Path>) -> Result<ServiceConfig, String> {
+        match config_file {
+            Some(path) => Ok(Self::from_file(path)?.merge(self)),
+            None => Ok(self),
+        }
+    }
+
     pub fn from_toml(text: &str) -> Result<ServiceConfig, String> {
         toml::from_str(text).map_err(|e| e.to_string())
     }
@@ -560,14 +592,13 @@ pub struct RunConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::{Cli, Commands};
     use clap::Parser;
 
     fn parse_run(args: &[&str]) -> ServiceConfig {
         let mut argv = vec!["wsw", "run"];
         argv.extend_from_slice(args);
         match Cli::try_parse_from(argv).unwrap().command {
-            Some(Commands::Run { config }) => config,
+            Some(Commands::Run { config, .. }) => config,
             _ => panic!("not a run command"),
         }
     }
@@ -783,6 +814,69 @@ mod tests {
             Some("Redmine project management")
         );
         assert_eq!(config.runtime().display_name, None);
+    }
+
+    #[test]
+    fn parses_image_paths() {
+        // Written by previous versions: the whole configuration
+        let legacy = r#""C:\Program Files\wsw\wsw.exe" run --cmd "C:\app\app.exe --port 80" --name myapp --log-rotation daily --max-log-files 30 --working-dir "C:\my app""#;
+        let (exe, config) = ServiceConfig::from_image_path(legacy).unwrap();
+        assert_eq!(exe, r"C:\Program Files\wsw\wsw.exe");
+        assert_eq!(config.cmd.as_deref(), Some(r"C:\app\app.exe --port 80"));
+        assert_eq!(config.name.as_deref(), Some("myapp"));
+        assert_eq!(config.working_dir.as_deref(), Some(r"C:\my app"));
+
+        // Written by this version: only the name
+        let (exe, config) =
+            ServiceConfig::from_image_path(r"C:\wsw\wsw.exe run --name Redmine").unwrap();
+        assert_eq!(exe, r"C:\wsw\wsw.exe");
+        assert_eq!(
+            config,
+            ServiceConfig {
+                name: Some("Redmine".into()),
+                ..Default::default()
+            }
+        );
+
+        assert!(ServiceConfig::from_image_path(r"C:\Windows\svchost.exe -k netsvcs").is_none());
+        assert!(ServiceConfig::from_image_path("").is_none());
+    }
+
+    #[test]
+    fn full_toml_file() {
+        let text = r#"
+name = "Redmine"
+display-name = "Redmine"
+exe = 'C:\Redmine\ruby\bin\ruby.exe'
+args = ['C:\Redmine\ruby\bin\bundle', "exec", "puma", "-e", "production"]
+working-dir = 'C:\Redmine\redmine'
+env = ["RAILS_ENV=production", 'PATH=C:\Redmine\ruby\bin;%PATH%']
+depends-on = ["RedminePostgreSQL"]
+start-type = "delayed-auto"
+account-name = 'NT AUTHORITY\NetworkService'
+grant-dir = ['C:\Redmine\redmine']
+restart = "on-failure"
+restart-delay = 10
+stop-timeout = 20
+log-dir = 'C:\Redmine\logs'
+log-max-size = 10
+max-log-files = 8
+"#;
+        let file = ServiceConfig::from_toml(text).unwrap();
+        // Command line flags take precedence over the file
+        let config = file.merge(parse_run(&["--stop-timeout", "30"]));
+        let run = config.resolve().unwrap();
+        assert_eq!(run.name, "Redmine");
+        assert_eq!(run.stop_timeout, Duration::from_secs(30));
+        assert_eq!(run.restart.policy, RestartPolicy::OnFailure);
+        assert_eq!(run.env.len(), 2);
+        let scm = config.scm().unwrap();
+        assert_eq!(scm.start_type, StartType::DelayedAuto);
+        assert_eq!(scm.depends_on, vec!["RedminePostgreSQL"]);
+        assert_eq!(
+            scm.account_name.as_deref(),
+            Some(r"NT AUTHORITY\NetworkService")
+        );
     }
 
     #[test]

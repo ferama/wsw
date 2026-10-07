@@ -13,6 +13,8 @@ pub mod rolling;
 #[cfg(windows)]
 pub mod runner;
 #[cfg(windows)]
+pub mod scm;
+#[cfg(windows)]
 pub mod security;
 #[cfg(windows)]
 pub mod service;

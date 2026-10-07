@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use windows_service::{define_windows_service, service_dispatcher};
@@ -40,11 +41,15 @@ fn load_config(cli_config: ServiceConfig) -> Result<RunConfig, String> {
     }
 }
 
-pub fn handle(cli_config: ServiceConfig) {
+pub fn handle(config_file: Option<PathBuf>, cli_config: ServiceConfig) {
     define_windows_service!(ffi_service_main, service_main);
 
-    let name = cli_config.service_name();
-    let config = load_config(cli_config);
+    let config = cli_config.with_file(config_file.as_deref());
+    let name = match &config {
+        Ok(config) => config.service_name(),
+        Err(_) => ServiceConfig::default().service_name(),
+    };
+    let config = config.and_then(load_config);
     let logs = match &config {
         Ok(config) => config.logs.clone(),
         Err(_) => LogConfig::default(),
