@@ -5,7 +5,7 @@ use windows_service::{define_windows_service, service_dispatcher};
 use crate::{
     cli::ServiceConfig,
     pkg::{
-        config::{LogConfig, LogRotation, RunConfig},
+        config::{LogConfig, RunConfig},
         console,
         logs::setup_logging,
         registry,
@@ -47,13 +47,9 @@ pub fn handle(cli_config: ServiceConfig) {
     let config = load_config(cli_config);
     let logs = match &config {
         Ok(config) => config.logs.clone(),
-        Err(_) => LogConfig {
-            disabled: false,
-            rotation: LogRotation::Daily,
-            max_files: 30,
-        },
+        Err(_) => LogConfig::default(),
     };
-    let _guard = setup_logging(&name, logs.rotation, logs.max_files);
+    let _guard = setup_logging(&name, &logs);
 
     set_run_config(config.clone());
     if let Err(_e) = service_dispatcher::start(&name, ffi_service_main) {

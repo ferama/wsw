@@ -303,6 +303,14 @@ fn configure_service(service: &Service, scm: &ScmSettings) -> windows_service::R
     for dir in &scm.grant_dirs {
         security::grant_directory_access(dir, account).map_err(windows_service::Error::Winapi)?;
     }
+    if let Some(dir) = &scm.log_dir {
+        std::fs::create_dir_all(dir).map_err(windows_service::Error::Winapi)?;
+        // LocalSystem can write anywhere already
+        if account.is_some() {
+            security::grant_directory_access(dir, account)
+                .map_err(windows_service::Error::Winapi)?;
+        }
+    }
     Ok(())
 }
 

@@ -9,6 +9,7 @@ pub mod logs;
 #[cfg(windows)]
 pub mod registry;
 pub mod restart;
+pub mod rolling;
 #[cfg(windows)]
 pub mod runner;
 #[cfg(windows)]

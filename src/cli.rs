@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 use crate::pkg::SERVICE_DESCRIPTION_PREFIX;
-pub use crate::pkg::config::{LogRotation, ServiceConfig};
+pub use crate::pkg::config::ServiceConfig;
 
 #[derive(Parser)]
 #[command(
@@ -29,6 +29,10 @@ pub enum Commands {
         /// This is useful for debugging the service itself
         #[arg(long, default_value_t = false)]
         full: bool,
+        /// Show the stderr of the wrapped process, for services installed
+        /// with --log-split
+        #[arg(long, default_value_t = false)]
+        stderr: bool,
     },
     /// Show the status of the Windows services managed from 'wsw'
     #[command(visible_alias = "ls")]

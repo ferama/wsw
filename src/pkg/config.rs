@@ -199,6 +199,23 @@ pub struct ServiceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_type: Option<StartType>,
 
+    /// Directory of the log files [default: %ProgramData%\wsw\logs]
+    #[arg(long, value_name = "PATH")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_dir: Option<String>,
+
+    /// Also rotate a log file when it grows over this size, in megabytes.
+    /// --max-log-files still applies
+    #[arg(long, value_name = "MB")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_max_size: Option<u64>,
+
+    /// Write the stderr of the wrapped process to a separate log file
+    /// (<name>.err.log), shown by 'wsw logs --stderr'
+    #[arg(long, num_args = 0..=1, require_equals = true, default_missing_value = "true")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_split: Option<bool>,
+
     /// Service that must be running before this one starts, repeatable
     #[arg(long, value_name = "SERVICE")]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -283,6 +300,9 @@ impl ServiceConfig {
             disable_logs,
             log_rotation,
             max_log_files,
+            log_dir,
+            log_max_size,
+            log_split,
             start_type,
             depends_on,
             scm_failure_actions,
@@ -368,6 +388,12 @@ impl ServiceConfig {
                 disabled: self.disable_logs.unwrap_or(false),
                 rotation: self.log_rotation.unwrap_or(LogRotation::Daily),
                 max_files: self.max_log_files.unwrap_or(30),
+                dir: self.log_dir.clone().filter(|dir| !dir.is_empty()),
+                max_size: self
+                    .log_max_size
+                    .filter(|mb| *mb > 0)
+                    .map(|mb| mb * 1024 * 1024),
+                split: self.log_split.unwrap_or(false),
             },
         })
     }
@@ -413,6 +439,7 @@ impl ServiceConfig {
             account_password,
             grant_logon_right: self.grant_logon_right.unwrap_or(false) && needs_logon_right,
             grant_dirs: non_empty(self.grant_dir.clone()),
+            log_dir: self.log_dir.clone().filter(|dir| !dir.is_empty()),
         })
     }
 }
@@ -432,6 +459,9 @@ pub struct ScmSettings {
     /// Grant SeServiceLogonRight, only set when the account needs it
     pub grant_logon_right: bool,
     pub grant_dirs: Vec<String>,
+    /// Custom log directory: created at install time and made writable by
+    /// the service account
+    pub log_dir: Option<String>,
 }
 
 /// How the wrapped process is launched.
@@ -459,6 +489,23 @@ pub struct LogConfig {
     pub disabled: bool,
     pub rotation: LogRotation,
     pub max_files: usize,
+    pub dir: Option<String>,
+    /// Bytes
+    pub max_size: Option<u64>,
+    pub split: bool,
+}
+
+impl Default for LogConfig {
+    fn default() -> Self {
+        Self {
+            disabled: false,
+            rotation: LogRotation::Daily,
+            max_files: 30,
+            dir: None,
+            max_size: None,
+            split: false,
+        }
+    }
 }
 
 /// A validated service configuration, with every default applied.
@@ -656,6 +703,30 @@ mod tests {
         let bad = parse_run(&["--scm-failure-actions", "reboot:1"]);
         assert!(bad.scm().is_err());
         assert_eq!(parse_run(&[]).scm().unwrap().failure_actions, None);
+    }
+
+    #[test]
+    fn log_options() {
+        let run = parse_run(&[
+            "--exe",
+            "a.exe",
+            "--log-dir",
+            r"C:\Redmine\logs",
+            "--log-max-size",
+            "10",
+            "--max-log-files",
+            "8",
+            "--log-split",
+        ])
+        .resolve()
+        .unwrap();
+        assert_eq!(run.logs.dir.as_deref(), Some(r"C:\Redmine\logs"));
+        assert_eq!(run.logs.max_size, Some(10 * 1024 * 1024));
+        assert_eq!(run.logs.max_files, 8);
+        assert!(run.logs.split);
+
+        let defaults = parse_run(&["--exe", "a.exe"]).resolve().unwrap();
+        assert_eq!(defaults.logs, LogConfig::default());
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::time::FormatTime;
 
-use crate::pkg::logs::SERVICE_LOG_PREFIX;
+use crate::pkg::logs::{SERVICE_LOG_PREFIX, write_stderr_line};
 
 pub struct LocalTimer;
 
@@ -162,19 +162,33 @@ impl LineBuffer {
     }
 }
 
+/// Output stream of the wrapped process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputStream {
+    Stdout,
+    Stderr,
+}
+
 /// Writer that forwards the output of the wrapped process to the log, one
 /// line at a time.
-#[derive(Default)]
 pub struct LogWriter {
     lines: LineBuffer,
+    stream: OutputStream,
 }
 
 impl LogWriter {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(stream: OutputStream) -> Self {
+        Self {
+            lines: LineBuffer::new(),
+            stream,
+        }
     }
 
-    fn log(line: &str) {
+    fn log(&self, line: &str) {
+        // With --log-split stderr has a file of its own
+        if self.stream == OutputStream::Stderr && write_stderr_line(line) {
+            return;
+        }
         tracing::info!("{}{}", SERVICE_LOG_PREFIX, line);
     }
 }
@@ -182,7 +196,7 @@ impl LogWriter {
 impl Write for LogWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         for line in self.lines.push(buf) {
-            Self::log(&line);
+            self.log(&line);
         }
         Ok(buf.len())
     }
@@ -196,7 +210,7 @@ impl Drop for LogWriter {
     fn drop(&mut self) {
         // The stream ended: log the last line even if it has no terminator
         if let Some(line) = self.lines.finish() {
-            Self::log(&line);
+            self.log(&line);
         }
     }
 }

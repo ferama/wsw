@@ -17,7 +17,7 @@ use windows_sys::Win32::System::JobObjects::{
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 
 use crate::pkg::config::{CommandSpec, RunConfig};
-use crate::pkg::log_writer::LogWriter;
+use crate::pkg::log_writer::{LogWriter, OutputStream};
 
 /// Owned Job Object handle. Closing it kills every process assigned to it
 /// because the job is created with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
@@ -225,13 +225,13 @@ pub fn spawn_in_job(mut command: Command, capture_output: bool) -> io::Result<Ch
     }
 
     if let Some(mut stdout) = child.stdout.take() {
-        let mut stdout_logger = LogWriter::new();
+        let mut stdout_logger = LogWriter::new(OutputStream::Stdout);
         thread::spawn(move || {
             let _ = std::io::copy(&mut stdout, &mut stdout_logger);
         });
     }
     if let Some(mut stderr) = child.stderr.take() {
-        let mut stderr_logger = LogWriter::new();
+        let mut stderr_logger = LogWriter::new(OutputStream::Stderr);
         thread::spawn(move || {
             let _ = std::io::copy(&mut stderr, &mut stderr_logger);
         });
