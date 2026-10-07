@@ -9,6 +9,7 @@ use crate::{
         console,
         logs::setup_logging,
         registry,
+        restart::service_specific_code,
         service::{service_main, set_run_config},
         stop_signal::StopSignal,
         supervisor::{Outcome, StatusSink, supervise},
@@ -85,5 +86,6 @@ fn run_foreground(config: &RunConfig) -> i32 {
     match supervise(config, &stop, &mut ForegroundStatus, true) {
         Outcome::Stopped => 0,
         Outcome::Exited(code) => code.unwrap_or(1),
+        Outcome::GaveUp(code) => service_specific_code(code) as i32,
     }
 }

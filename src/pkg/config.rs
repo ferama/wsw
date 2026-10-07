@@ -7,6 +7,7 @@ use tracing_appender::rolling::Rotation;
 
 use crate::pkg::SERVICE_DESCRIPTION_PREFIX;
 use crate::pkg::account::{self, AccountKind};
+use crate::pkg::restart::{self, RestartConfig, RestartPolicy, ScmAction};
 use crate::pkg::{cmdline, env};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +71,7 @@ pub enum StartType {
 }
 
 const DEFAULT_STOP_TIMEOUT: u64 = 15;
+const DEFAULT_SCM_FAILURE_RESET: u64 = 24 * 60 * 60;
 /// Seconds added to the stop timeout for the preshutdown timeout
 const PRESHUTDOWN_MARGIN: u64 = 15;
 
@@ -140,6 +142,39 @@ pub struct ServiceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop_cmd: Option<String>,
 
+    /// When to restart the wrapped process after it exits on its own:
+    /// always, on-failure (non-zero exit code) or never [default: always].
+    /// When it is not restarted the service stops, reporting the exit code
+    /// of the process to the SCM
+    #[arg(long, value_enum, value_name = "POLICY")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restart: Option<RestartPolicy>,
+
+    /// Seconds to wait before restarting the wrapped process. Alone it is a
+    /// fixed delay; with --restart-max-delay it doubles at every
+    /// consecutive failure [default: 1, doubling up to 60]
+    #[arg(long, value_name = "SECS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restart_delay: Option<u64>,
+
+    /// Maximum restart delay in seconds, enables the exponential backoff
+    #[arg(long, value_name = "SECS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restart_max_delay: Option<u64>,
+
+    /// Seconds of stable run after which the restart delay and the failure
+    /// count start over [default: 60]
+    #[arg(long, value_name = "SECS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reset_after: Option<u64>,
+
+    /// Consecutive restarts before giving up: the service then stops with
+    /// a failure exit code, so that the SCM recovery actions can kick in
+    /// [default: 0, unlimited]
+    #[arg(long, value_name = "COUNT")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_restarts: Option<u32>,
+
     /// If set, wrapped application logs will not be captured.
     /// This means that following call to the "logs" subcommand will not
     /// display any output regarding the wrapped app. This is useful in scenarios
@@ -168,6 +203,20 @@ pub struct ServiceConfig {
     #[arg(long, value_name = "SERVICE")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depends_on: Option<Vec<String>>,
+
+    /// Native recovery actions of the SCM, applied when the service fails
+    /// (it crashes or stops with a non-zero exit code): comma separated
+    /// 'restart:<secs>' or 'none' for the first, second and subsequent
+    /// failures, e.g. 'restart:10,restart:60,none'
+    #[arg(long, value_name = "ACTIONS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scm_failure_actions: Option<String>,
+
+    /// Seconds without failures after which the SCM resets the failure
+    /// count of --scm-failure-actions [default: 86400]
+    #[arg(long, value_name = "SECS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scm_failure_reset: Option<u64>,
 
     /// Run the service using the specified account (default: LocalSystem).
     /// Built-in accounts need no password: LocalSystem, LocalService,
@@ -226,11 +275,18 @@ impl ServiceConfig {
             env_file,
             stop_timeout,
             stop_cmd,
+            restart,
+            restart_delay,
+            restart_max_delay,
+            reset_after,
+            max_restarts,
             disable_logs,
             log_rotation,
             max_log_files,
             start_type,
             depends_on,
+            scm_failure_actions,
+            scm_failure_reset,
             account_name,
             account_password,
             grant_logon_right,
@@ -246,6 +302,8 @@ impl ServiceConfig {
         ServiceConfig {
             start_type: None,
             depends_on: None,
+            scm_failure_actions: None,
+            scm_failure_reset: None,
             account_name: None,
             account_password: None,
             grant_logon_right: None,
@@ -299,6 +357,13 @@ impl ServiceConfig {
             env_file: self.env_file.clone().filter(|path| !path.is_empty()),
             stop_timeout: Duration::from_secs(self.stop_timeout.unwrap_or(DEFAULT_STOP_TIMEOUT)),
             stop_cmd: self.stop_cmd.clone().filter(|cmd| !cmd.trim().is_empty()),
+            restart: RestartConfig::new(
+                self.restart,
+                self.restart_delay,
+                self.restart_max_delay,
+                self.reset_after,
+                self.max_restarts,
+            ),
             logs: LogConfig {
                 disabled: self.disable_logs.unwrap_or(false),
                 rotation: self.log_rotation.unwrap_or(LogRotation::Daily),
@@ -331,7 +396,16 @@ impl ServiceConfig {
         let stop_timeout = self.stop_timeout.unwrap_or(DEFAULT_STOP_TIMEOUT);
         let preshutdown_timeout = Duration::from_secs(stop_timeout + PRESHUTDOWN_MARGIN);
 
+        let failure_actions = match &self.scm_failure_actions {
+            Some(spec) => Some(restart::parse_scm_actions(spec)?),
+            None => None,
+        };
+
         Ok(ScmSettings {
+            failure_actions,
+            failure_reset: Duration::from_secs(
+                self.scm_failure_reset.unwrap_or(DEFAULT_SCM_FAILURE_RESET),
+            ),
             preshutdown_timeout,
             start_type: self.start_type.unwrap_or(StartType::Auto),
             depends_on: non_empty(self.depends_on.clone()),
@@ -346,6 +420,9 @@ impl ServiceConfig {
 /// Options stored by the SCM, validated.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScmSettings {
+    /// None to leave the recovery actions untouched, empty to clear them
+    pub failure_actions: Option<Vec<ScmAction>>,
+    pub failure_reset: Duration,
     pub preshutdown_timeout: Duration,
     pub start_type: StartType,
     pub depends_on: Vec<String>,
@@ -395,6 +472,7 @@ pub struct RunConfig {
     pub env_file: Option<String>,
     pub stop_timeout: Duration,
     pub stop_cmd: Option<String>,
+    pub restart: RestartConfig,
     pub logs: LogConfig,
 }
 
@@ -541,6 +619,43 @@ mod tests {
             config.scm().unwrap().preshutdown_timeout,
             Duration::from_secs(35)
         );
+    }
+
+    #[test]
+    fn restart_options() {
+        let config = parse_run(&[
+            "--exe",
+            "a.exe",
+            "--restart",
+            "on-failure",
+            "--restart-delay",
+            "10",
+            "--max-restarts",
+            "5",
+            "--scm-failure-actions",
+            "restart:10,none",
+        ]);
+        let run = config.resolve().unwrap();
+        assert_eq!(run.restart.policy, RestartPolicy::OnFailure);
+        assert_eq!(run.restart.delay, Duration::from_secs(10));
+        assert_eq!(run.restart.max_delay, Duration::from_secs(10));
+        assert_eq!(run.restart.max_restarts, 5);
+
+        let scm = config.scm().unwrap();
+        assert_eq!(
+            scm.failure_actions,
+            Some(vec![
+                ScmAction::Restart(Duration::from_secs(10)),
+                ScmAction::None
+            ])
+        );
+        assert_eq!(scm.failure_reset, Duration::from_secs(86400));
+        // SCM recovery actions are not a runtime option
+        assert_eq!(config.runtime().scm_failure_actions, None);
+
+        let bad = parse_run(&["--scm-failure-actions", "reboot:1"]);
+        assert!(bad.scm().is_err());
+        assert_eq!(parse_run(&[]).scm().unwrap().failure_actions, None);
     }
 
     #[test]

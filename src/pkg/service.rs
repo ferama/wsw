@@ -13,7 +13,9 @@ use windows_service::{
 };
 
 use windows_service::service::{
-    Service, ServiceAccess, ServiceDependency, ServiceErrorControl, ServiceInfo, ServiceStartType,
+    Service, ServiceAccess, ServiceAction, ServiceActionType, ServiceDependency,
+    ServiceErrorControl, ServiceFailureActions, ServiceFailureResetPeriod, ServiceInfo,
+    ServiceStartType,
 };
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
@@ -22,6 +24,7 @@ use std::ffi::OsString;
 use super::config::{RunConfig, ScmSettings, ServiceConfig, StartType};
 use super::console;
 use super::registry;
+use super::restart::ScmAction;
 use super::restart::service_specific_code;
 use super::security;
 use super::stop_signal::StopSignal;
@@ -187,13 +190,11 @@ fn run_service(config: &Result<RunConfig, String>) -> windows_service::Result<()
 
     status.pending(ServiceState::StopPending, STOP_MARGIN);
     let exit_code = match outcome {
-        Outcome::Stopped => ServiceExitCode::Win32(0),
-        Outcome::Exited(child_exit_code) => {
+        Outcome::Stopped | Outcome::Exited(Some(0)) => ServiceExitCode::Win32(0),
+        Outcome::Exited(child_exit_code) | Outcome::GaveUp(child_exit_code) => {
+            // A non-zero exit code lets the SCM recovery actions kick in
             let code = service_specific_code(child_exit_code);
-            error!(
-                "Service terminated on its own, reporting exit code {}",
-                code
-            );
+            error!("Service failed, reporting exit code {}", code);
             ServiceExitCode::ServiceSpecific(code)
         }
     };
@@ -265,6 +266,32 @@ fn scm_start_type(start_type: StartType) -> ServiceStartType {
 fn configure_service(service: &Service, scm: &ScmSettings) -> windows_service::Result<()> {
     service.set_delayed_auto_start(scm.start_type == StartType::DelayedAuto)?;
     service.set_preshutdown_timeout(scm.preshutdown_timeout)?;
+
+    if let Some(actions) = &scm.failure_actions {
+        let actions: Vec<ServiceAction> = actions
+            .iter()
+            .map(|action| match action {
+                ScmAction::Restart(delay) => ServiceAction {
+                    action_type: ServiceActionType::Restart,
+                    delay: *delay,
+                },
+                ScmAction::None => ServiceAction {
+                    action_type: ServiceActionType::None,
+                    delay: Duration::default(),
+                },
+            })
+            .collect();
+        let enabled = !actions.is_empty();
+        service.update_failure_actions(ServiceFailureActions {
+            reset_period: ServiceFailureResetPeriod::After(scm.failure_reset),
+            reboot_msg: None,
+            command: None,
+            actions: Some(actions),
+        })?;
+        // Also apply them when the service stops with a non-zero exit code,
+        // not only when its process crashes
+        service.set_failure_actions_on_non_crash_failures(enabled)?;
+    }
 
     let account = scm.account_name.as_deref();
     if scm.grant_logon_right

@@ -5,7 +5,6 @@ use tracing::{error, info, warn};
 use crate::pkg::config::RunConfig;
 use crate::pkg::console;
 use crate::pkg::env;
-use crate::pkg::restart::Backoff;
 use crate::pkg::runner::{ChildProcess, run_command, spawn_shell_command};
 use crate::pkg::stop_signal::StopSignal;
 
@@ -16,11 +15,6 @@ pub const STOP_MARGIN: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// How often the exit of a stopping child is checked.
 const STOP_POLL_INTERVAL: Duration = Duration::from_millis(100);
-/// Restart backoff: first delay, maximum delay and the uptime after which
-/// the child is considered stable and the backoff starts over.
-const RESTART_DELAY: Duration = Duration::from_secs(1);
-const RESTART_MAX_DELAY: Duration = Duration::from_secs(60);
-const RESTART_RESET_AFTER: Duration = Duration::from_secs(60);
 
 /// Receives the state changes of the supervisor (reported to the SCM when
 /// running as a service).
@@ -36,9 +30,12 @@ pub trait StatusSink {
 pub enum Outcome {
     /// Stopped on request
     Stopped,
-    /// Terminated on its own because of the wrapped process. Holds the exit
-    /// code of the last run, None if it could not be started.
+    /// The wrapped process exited and the restart policy says not to
+    /// restart it. Holds its exit code, None if it could not be started.
     Exited(Option<i32>),
+    /// The wrapped process failed more than --max-restarts times in a row.
+    /// Holds the exit code of the last run.
+    GaveUp(Option<i32>),
 }
 
 /// Runs the wrapped process, restarting it when it exits, until `stop` is
@@ -66,7 +63,7 @@ pub fn supervise(
         info!("Environment variables: {}", names.join(", "));
     }
 
-    let mut backoff = Backoff::new(RESTART_DELAY, RESTART_MAX_DELAY, RESTART_RESET_AFTER);
+    let mut backoff = config.restart.backoff();
     let mut first_start = true;
     loop {
         if stop.is_triggered() {
@@ -82,18 +79,22 @@ pub fn supervise(
             status.running();
         }
 
-        match process {
+        // Exit code of this run, None if the process could not be started
+        let exit_code = match process {
             Err(e) => {
                 error!("Failed to start command: {}", e);
+                None
             }
             Ok(mut process) => {
                 info!("Child process started with PID: {}", process.id());
 
                 // Wait for the child to exit or for a stop request
+                let mut exit_code = None;
                 while !stop.wait_timeout(POLL_INTERVAL) {
                     match process.child.try_wait() {
                         Ok(Some(exit_status)) => {
                             error!("Child exited with status: {}", exit_status);
+                            exit_code = exit_status.code();
                             break;
                         }
                         Ok(None) => {}
@@ -108,18 +109,37 @@ pub fn supervise(
                     stop_gracefully(&mut process, config, &env, status, foreground);
                 }
                 process.kill_tree();
+                exit_code
             }
+        };
+
+        if stop.is_triggered() {
+            return Outcome::Stopped;
         }
 
-        if !stop.is_triggered() {
-            let delay = backoff.next_delay(started_at.elapsed());
+        let restart = &config.restart;
+        if !restart.policy.should_restart(exit_code) {
             info!(
-                "Restarting in {:?} (consecutive failures: {})",
-                delay,
+                "Not restarting the child process (restart policy: {:?})",
+                restart.policy
+            );
+            return Outcome::Exited(exit_code);
+        }
+
+        let delay = backoff.next_delay(started_at.elapsed());
+        if restart.gives_up(backoff.consecutive_failures()) {
+            error!(
+                "Child process failed {} times in a row, giving up",
                 backoff.consecutive_failures()
             );
-            stop.wait_timeout(delay);
+            return Outcome::GaveUp(exit_code);
         }
+        info!(
+            "Restarting in {:?} (consecutive failures: {})",
+            delay,
+            backoff.consecutive_failures()
+        );
+        stop.wait_timeout(delay);
     }
 }
 

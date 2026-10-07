@@ -1,5 +1,115 @@
 use std::time::Duration;
 
+use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
+
+/// When the wrapped process is restarted after it exits on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum RestartPolicy {
+    /// Always restart it
+    Always,
+    /// Restart it only if it exits with a non-zero exit code
+    OnFailure,
+    /// Never restart it: the service stops with the process
+    Never,
+}
+
+impl RestartPolicy {
+    /// `exit_code` is None if the process could not be started at all.
+    pub fn should_restart(self, exit_code: Option<i32>) -> bool {
+        match self {
+            RestartPolicy::Always => true,
+            RestartPolicy::OnFailure => exit_code != Some(0),
+            RestartPolicy::Never => false,
+        }
+    }
+}
+
+/// Restart settings, with defaults applied.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RestartConfig {
+    pub policy: RestartPolicy,
+    pub delay: Duration,
+    pub max_delay: Duration,
+    pub reset_after: Duration,
+    /// Consecutive restarts before giving up, 0 for unlimited
+    pub max_restarts: u32,
+}
+
+impl RestartConfig {
+    pub const DEFAULT_DELAY: u64 = 1;
+    pub const DEFAULT_MAX_DELAY: u64 = 60;
+    pub const DEFAULT_RESET_AFTER: u64 = 60;
+
+    /// Without options the delay starts at 1s and doubles up to 60s. Setting
+    /// only the delay makes it fixed; setting the max delay too enables the
+    /// exponential backoff between the two.
+    pub fn new(
+        policy: Option<RestartPolicy>,
+        delay: Option<u64>,
+        max_delay: Option<u64>,
+        reset_after: Option<u64>,
+        max_restarts: Option<u32>,
+    ) -> Self {
+        let max_delay = match (delay, max_delay) {
+            (_, Some(max)) => max,
+            (Some(delay), None) => delay,
+            (None, None) => Self::DEFAULT_MAX_DELAY,
+        };
+        Self {
+            policy: policy.unwrap_or(RestartPolicy::Always),
+            delay: Duration::from_secs(delay.unwrap_or(Self::DEFAULT_DELAY)),
+            max_delay: Duration::from_secs(max_delay),
+            reset_after: Duration::from_secs(reset_after.unwrap_or(Self::DEFAULT_RESET_AFTER)),
+            max_restarts: max_restarts.unwrap_or(0),
+        }
+    }
+
+    pub fn backoff(&self) -> Backoff {
+        Backoff::new(self.delay, self.max_delay, self.reset_after)
+    }
+
+    /// Whether `failures` consecutive failures exceed the allowed restarts.
+    pub fn gives_up(&self, failures: u32) -> bool {
+        self.max_restarts > 0 && failures > self.max_restarts
+    }
+}
+
+/// A recovery action of the SCM (`--scm-failure-actions`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScmAction {
+    /// Restart the service after the delay
+    Restart(Duration),
+    /// Take no action
+    None,
+}
+
+/// Parses a comma separated list of SCM recovery actions, applied to the
+/// first, second and subsequent failures: `restart:<secs>` or `none`, e.g.
+/// `restart:10,restart:60,none`. An empty string clears the actions.
+pub fn parse_scm_actions(spec: &str) -> Result<Vec<ScmAction>, String> {
+    if spec.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    spec.split(',')
+        .map(|action| {
+            let action = action.trim();
+            match action.split_once(':') {
+                _ if action.eq_ignore_ascii_case("none") => Ok(ScmAction::None),
+                Some((kind, delay)) if kind.trim().eq_ignore_ascii_case("restart") => delay
+                    .trim()
+                    .parse::<u64>()
+                    .map(|secs| ScmAction::Restart(Duration::from_secs(secs)))
+                    .map_err(|_| format!("invalid delay in SCM failure action '{action}'")),
+                _ => Err(format!(
+                    "invalid SCM failure action '{action}': expected restart:<secs> or none"
+                )),
+            }
+        })
+        .collect()
+}
+
 /// Exponential backoff between restarts of the wrapped process.
 ///
 /// The delay starts at `base` and doubles after every consecutive failure,
@@ -57,6 +167,66 @@ pub fn service_specific_code(child_exit_code: Option<i32>) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restart_policies() {
+        use RestartPolicy::*;
+        assert!(Always.should_restart(Some(0)));
+        assert!(Always.should_restart(None));
+        assert!(!OnFailure.should_restart(Some(0)));
+        assert!(OnFailure.should_restart(Some(1)));
+        assert!(OnFailure.should_restart(None));
+        assert!(!Never.should_restart(Some(1)));
+    }
+
+    #[test]
+    fn restart_config_defaults() {
+        let config = RestartConfig::new(None, None, None, None, None);
+        assert_eq!(config.policy, RestartPolicy::Always);
+        let mut backoff = config.backoff();
+        let delays: Vec<u64> = (0..8)
+            .map(|_| backoff.next_delay(Duration::ZERO).as_secs())
+            .collect();
+        assert_eq!(delays, vec![1, 2, 4, 8, 16, 32, 60, 60]);
+        assert!(!config.gives_up(1000));
+    }
+
+    #[test]
+    fn restart_delay_alone_is_fixed() {
+        let config = RestartConfig::new(Some(RestartPolicy::OnFailure), Some(10), None, None, None);
+        let mut backoff = config.backoff();
+        assert_eq!(backoff.next_delay(Duration::ZERO), Duration::from_secs(10));
+        assert_eq!(backoff.next_delay(Duration::ZERO), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn restart_delay_with_max_is_exponential() {
+        let config = RestartConfig::new(None, Some(5), Some(30), Some(120), Some(3));
+        let mut backoff = config.backoff();
+        let delays: Vec<u64> = (0..4)
+            .map(|_| backoff.next_delay(Duration::ZERO).as_secs())
+            .collect();
+        assert_eq!(delays, vec![5, 10, 20, 30]);
+        assert_eq!(config.reset_after, Duration::from_secs(120));
+        assert!(!config.gives_up(3));
+        assert!(config.gives_up(4));
+    }
+
+    #[test]
+    fn parses_scm_actions() {
+        assert_eq!(
+            parse_scm_actions("restart:10, restart:60,NONE"),
+            Ok(vec![
+                ScmAction::Restart(Duration::from_secs(10)),
+                ScmAction::Restart(Duration::from_secs(60)),
+                ScmAction::None,
+            ])
+        );
+        assert_eq!(parse_scm_actions(""), Ok(vec![]));
+        assert!(parse_scm_actions("restart").is_err());
+        assert!(parse_scm_actions("restart:x").is_err());
+        assert!(parse_scm_actions("reboot:10").is_err());
+    }
 
     #[test]
     fn service_specific_code_is_never_zero() {
