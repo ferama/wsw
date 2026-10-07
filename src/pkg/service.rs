@@ -323,9 +323,12 @@ pub fn wait_for_service_status(
     let service = manager.open_service(name, ServiceAccess::QUERY_STATUS)?;
 
     // Wait for the service to reach the target state
+    let start = std::time::Instant::now();
     loop {
         let status = service.query_status()?;
-        let start = std::time::Instant::now();
+        if status.current_state == target_state {
+            break;
+        }
         if start.elapsed() > timeout {
             tracing::error!("Timeout waiting for service status to change");
             return Err(windows_service::Error::Winapi(io::Error::new(
@@ -333,10 +336,7 @@ pub fn wait_for_service_status(
                 "operation timed out",
             )));
         }
-        if status.current_state == target_state {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        std::thread::sleep(std::time::Duration::from_millis(250));
     }
     Ok(())
 }
