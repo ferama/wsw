@@ -179,13 +179,13 @@ pub fn run_command(
     }
 
     if let Some(mut stdout) = child.stdout.take() {
-        let mut stdout_logger = LogWriter;
+        let mut stdout_logger = LogWriter::new();
         thread::spawn(move || {
             let _ = std::io::copy(&mut stdout, &mut stdout_logger);
         });
     }
     if let Some(mut stderr) = child.stderr.take() {
-        let mut stderr_logger = LogWriter;
+        let mut stderr_logger = LogWriter::new();
         thread::spawn(move || {
             let _ = std::io::copy(&mut stderr, &mut stderr_logger);
         });
