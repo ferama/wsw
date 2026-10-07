@@ -106,7 +106,15 @@ impl Drop for ChildProcess {
     }
 }
 
-fn find_working_dir(cmdline: &str, working_dir: Option<String>) -> PathBuf {
+/// The executable of the command, used to pick the default working directory.
+fn command_executable(command: &CommandSpec) -> Option<String> {
+    match command {
+        CommandSpec::Shell(cmdline) => extract_executable(cmdline),
+        CommandSpec::Exec { exe, .. } => Some(exe.clone()),
+    }
+}
+
+fn find_working_dir(command: &CommandSpec, working_dir: Option<String>) -> PathBuf {
     let mut cmd_working_dir: PathBuf = Path::new(".").to_path_buf();
 
     // Check if the working directory is provided and not empty
@@ -117,9 +125,8 @@ fn find_working_dir(cmdline: &str, working_dir: Option<String>) -> PathBuf {
         }
     }
 
-    // Attempt to find the working directory from the command line
-    // Split the command line into parts and get the first part as the executable name
-    if let Some(exe) = extract_executable(cmdline) {
+    // Attempt to find the working directory from the executable
+    if let Some(exe) = command_executable(command) {
         if let Some(parent) = Path::new(&exe).parent() {
             cmd_working_dir = Path::new(parent).to_path_buf();
         }
@@ -135,15 +142,40 @@ fn find_working_dir(cmdline: &str, working_dir: Option<String>) -> PathBuf {
     cmd_working_dir
 }
 
-pub fn run_command(config: &RunConfig, env: &[(String, String)]) -> io::Result<ChildProcess> {
-    let CommandSpec::Shell(cmdline) = &config.command;
-    let disable_logs = config.logs.disabled;
+/// Builds the process for a command: shell command lines go through
+/// `cmd.exe /C`, executables are started directly (the standard library
+/// quotes the arguments following the `CommandLineToArgvW` rules).
+fn build_command(command: &CommandSpec) -> Command {
+    match command {
+        CommandSpec::Shell(cmdline) => {
+            let mut process = Command::new("cmd.exe");
+            process.arg("/C").arg(cmdline);
+            process
+        }
+        CommandSpec::Exec { exe, args } => {
+            let mut process = Command::new(exe);
+            process.args(args);
+            process
+        }
+    }
+}
 
+pub fn run_command(config: &RunConfig, env: &[(String, String)]) -> io::Result<ChildProcess> {
     // detect the more appropriate working directory for the command line
-    let cmd_working_dir = find_working_dir(cmdline, config.working_dir.clone());
-    info!("Command: {:?}", cmdline);
+    let cmd_working_dir = find_working_dir(&config.command, config.working_dir.clone());
+    info!("Command: {}", config.command);
     info!("Working directory: {:?}", cmd_working_dir);
 
+    let mut command = build_command(&config.command);
+    command
+        .envs(env.iter().map(|(k, v)| (k, v)))
+        .current_dir(cmd_working_dir);
+    spawn_in_job(command, !config.logs.disabled)
+}
+
+/// Spawns a process in a new Job Object, optionally forwarding its output to
+/// the log.
+pub fn spawn_in_job(mut command: Command, capture_output: bool) -> io::Result<ChildProcess> {
     // Create a Job Object
     // The Job Object is used to manage the process and its children
     // and to ensure that all processes are terminated when the Job Object is closed
@@ -156,21 +188,17 @@ pub fn run_command(config: &RunConfig, env: &[(String, String)]) -> io::Result<C
     // When logs are disabled nobody would drain the pipes and the child
     // would block as soon as they are full, so discard the output instead.
     let output = || {
-        if disable_logs {
-            Stdio::null()
-        } else {
+        if capture_output {
             Stdio::piped()
+        } else {
+            Stdio::null()
         }
     };
 
-    let mut child = Command::new("cmd.exe")
-        .arg("/C")
-        .arg(cmdline)
-        .envs(env.iter().map(|(k, v)| (k, v)))
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(output())
         .stderr(output())
-        .current_dir(cmd_working_dir)
         .spawn()?;
 
     if let Err(e) = assign_to_job(&job, &child) {
@@ -255,23 +283,33 @@ mod tests {
 
     #[test]
     fn test_find_working_dir_with_provided_working_dir() {
-        let cmdline = r#"C:\SomeApp\app.exe --arg1"#;
+        let cmdline = CommandSpec::Shell(r#"C:\SomeApp\app.exe --arg1"#.into());
         let working_dir = Some(String::from(r#"C:\CustomDir"#));
-        let result = find_working_dir(cmdline, working_dir);
+        let result = find_working_dir(&cmdline, working_dir);
         assert_eq!(result, PathBuf::from(r#"C:\CustomDir"#));
     }
 
     #[test]
     fn test_find_working_dir_with_executable_path() {
-        let cmdline = r#"C:\SomeApp\app.exe --arg1"#;
-        let result = find_working_dir(cmdline, None);
+        let cmdline = CommandSpec::Shell(r#"C:\SomeApp\app.exe --arg1"#.into());
+        let result = find_working_dir(&cmdline, None);
         assert_eq!(result, PathBuf::from(r#"C:\SomeApp"#));
     }
 
     #[test]
+    fn test_find_working_dir_with_exe() {
+        let command = CommandSpec::Exec {
+            exe: r"C:\Redmine\ruby\bin\ruby.exe".into(),
+            args: vec!["exec".into()],
+        };
+        let result = find_working_dir(&command, None);
+        assert_eq!(result, PathBuf::from(r"C:\Redmine\ruby\bin"));
+    }
+
+    #[test]
     fn test_find_working_dir_with_empty_command() {
-        let cmdline = r#""#;
-        let result = find_working_dir(cmdline, None);
+        let cmdline = CommandSpec::Shell(String::new());
+        let result = find_working_dir(&cmdline, None);
         assert_eq!(result, PathBuf::from(r#"."#));
     }
 }

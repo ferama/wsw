@@ -19,7 +19,7 @@ use crate::{
 /// carry their name: the configuration is read from the registry, and
 /// command line options still take precedence (useful for debugging).
 fn load_config(cli_config: ServiceConfig) -> Result<RunConfig, String> {
-    if cli_config.cmd.is_some() {
+    if cli_config.cmd.is_some() || cli_config.exe.is_some() {
         return cli_config.resolve();
     }
     let name = cli_config.service_name();

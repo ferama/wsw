@@ -6,7 +6,7 @@ use tracing_appender::rolling::Rotation;
 
 use crate::pkg::SERVICE_DESCRIPTION_PREFIX;
 use crate::pkg::account::{self, AccountKind};
-use crate::pkg::env;
+use crate::pkg::{cmdline, env};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -85,10 +85,23 @@ pub struct ServiceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
-    /// Command line to run as a service, executed through 'cmd.exe /C'
-    #[arg(long, short)]
+    /// Command line to run as a service, executed through 'cmd.exe /C'.
+    /// Prefer --exe: it avoids the cmd.exe quoting rules, allows a graceful
+    /// stop and reports the real exit code of the process
+    #[arg(long, short, conflicts_with = "exe")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cmd: Option<String>,
+
+    /// Executable to run as a service, started directly. Its arguments
+    /// follow '--': wsw install --name x --exe C:\app\app.exe -- --port 80
+    #[arg(long, value_name = "PATH")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exe: Option<String>,
+
+    /// Arguments of --exe
+    #[arg(last = true, value_name = "ARGS")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
 
     /// Service working directory.
     /// If not specified, the directory of the executable will be used
@@ -178,10 +191,18 @@ impl ServiceConfig {
     /// Returns a configuration where every option set in `over` takes
     /// precedence over the one in `self`.
     pub fn merge(self, over: ServiceConfig) -> ServiceConfig {
-        let base = self;
+        let mut base = self;
+        // The command is replaced as a whole: --cmd and --exe are exclusive
+        if over.cmd.is_some() || over.exe.is_some() {
+            base.cmd = None;
+            base.exe = None;
+            base.args = None;
+        }
         merge_fields!(base, over;
             name,
             cmd,
+            exe,
+            args,
             working_dir,
             env,
             env_file,
@@ -229,9 +250,19 @@ impl ServiceConfig {
 
     /// Validates the configuration and applies the defaults.
     pub fn resolve(&self) -> Result<RunConfig, String> {
-        let command = match &self.cmd {
-            Some(cmd) if !cmd.trim().is_empty() => CommandSpec::Shell(cmd.clone()),
-            _ => return Err("a command is required: use --cmd".to_string()),
+        let command = match (&self.cmd, &self.exe) {
+            (Some(_), Some(_)) => return Err("--cmd and --exe cannot be used together".to_string()),
+            (Some(cmd), None) if !cmd.trim().is_empty() => {
+                if self.args.is_some() {
+                    return Err("arguments after '--' require --exe".to_string());
+                }
+                CommandSpec::Shell(cmd.clone())
+            }
+            (None, Some(exe)) if !exe.trim().is_empty() => CommandSpec::Exec {
+                exe: exe.clone(),
+                args: self.args.clone().unwrap_or_default(),
+            },
+            _ => return Err("a command is required: use --exe or --cmd".to_string()),
         };
 
         // An empty value clears a list option
@@ -302,6 +333,19 @@ pub struct ScmSettings {
 pub enum CommandSpec {
     /// A command line interpreted by `cmd.exe /C`
     Shell(String),
+    /// An executable started directly
+    Exec { exe: String, args: Vec<String> },
+}
+
+impl std::fmt::Display for CommandSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommandSpec::Shell(cmdline) => write!(f, "cmd.exe /C {}", cmdline),
+            CommandSpec::Exec { exe, args } => f.write_str(&cmdline::join(
+                std::iter::once(exe.as_str()).chain(args.iter().map(String::as_str)),
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -374,6 +418,75 @@ mod tests {
         assert_eq!(run.logs.rotation, LogRotation::Daily);
         assert_eq!(run.logs.max_files, 30);
         assert_eq!(run.working_dir, None);
+    }
+
+    #[test]
+    fn exe_with_trailing_arguments() {
+        let config = parse_run(&[
+            "--name",
+            "Redmine",
+            "--exe",
+            r"C:\Redmine\ruby\bin\ruby.exe",
+            "--",
+            r"C:\Redmine\ruby\bin\bundle",
+            "exec",
+            "puma",
+            "-e",
+            "production",
+            "-b",
+            "tcp://0.0.0.0:3000",
+        ]);
+        let run = config.resolve().unwrap();
+        assert_eq!(
+            run.command,
+            CommandSpec::Exec {
+                exe: r"C:\Redmine\ruby\bin\ruby.exe".into(),
+                args: [
+                    r"C:\Redmine\ruby\bin\bundle",
+                    "exec",
+                    "puma",
+                    "-e",
+                    "production",
+                    "-b",
+                    "tcp://0.0.0.0:3000"
+                ]
+                .map(String::from)
+                .to_vec(),
+            }
+        );
+        assert_eq!(
+            run.command.to_string(),
+            r"C:\Redmine\ruby\bin\ruby.exe C:\Redmine\ruby\bin\bundle exec puma -e production -b tcp://0.0.0.0:3000"
+        );
+
+        // Arguments that look like wsw flags belong to the executable
+        let config = parse_run(&["--exe", "app.exe", "--", "--name", "-d"]);
+        assert_eq!(config.args, Some(vec!["--name".into(), "-d".into()]));
+        assert_eq!(config.name, None);
+    }
+
+    #[test]
+    fn cmd_and_exe_are_exclusive() {
+        let cli = || Cli::try_parse_from(["wsw", "run", "--cmd", "a", "--exe", "b"]);
+        assert!(cli().is_err());
+        assert!(parse_run(&["--cmd", "a", "--", "x"]).resolve().is_err());
+
+        // A new command replaces the stored one as a whole
+        let stored = ServiceConfig {
+            exe: Some("old.exe".into()),
+            args: Some(vec!["--old".into()]),
+            ..Default::default()
+        };
+        let merged = stored.merge(ServiceConfig {
+            cmd: Some("new.bat".into()),
+            ..Default::default()
+        });
+        assert_eq!(merged.exe, None);
+        assert_eq!(merged.args, None);
+        assert_eq!(
+            merged.resolve().unwrap().command,
+            CommandSpec::Shell("new.bat".into())
+        );
     }
 
     #[test]
