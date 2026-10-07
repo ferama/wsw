@@ -1,5 +1,6 @@
 pub mod account;
 pub mod config;
+pub mod env;
 pub mod log_writer;
 pub mod logs;
 #[cfg(windows)]

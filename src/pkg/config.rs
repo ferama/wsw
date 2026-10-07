@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tracing_appender::rolling::Rotation;
 
 use crate::pkg::SERVICE_DESCRIPTION_PREFIX;
+use crate::pkg::env;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -80,6 +81,19 @@ pub struct ServiceConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<String>,
 
+    /// Environment variable of the wrapped process, repeatable.
+    /// Values can reference other variables: --env "PATH=C:\Ruby\bin;%PATH%"
+    #[arg(long = "env", value_name = "KEY=VALUE")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env: Option<Vec<String>>,
+
+    /// File with the environment variables of the wrapped process, one
+    /// KEY=VALUE per line ('#' comments allowed). It is read every time the
+    /// service starts; --env entries take precedence
+    #[arg(long, value_name = "PATH")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env_file: Option<String>,
+
     /// If set, wrapped application logs will not be captured.
     /// This means that following call to the "logs" subcommand will not
     /// display any output regarding the wrapped app. This is useful in scenarios
@@ -132,6 +146,8 @@ impl ServiceConfig {
             name,
             cmd,
             working_dir,
+            env,
+            env_file,
             disable_logs,
             log_rotation,
             max_log_files,
@@ -173,10 +189,18 @@ impl ServiceConfig {
             _ => return Err("a command is required: use --cmd".to_string()),
         };
 
+        // An empty value clears a list option
+        let env: Vec<String> = non_empty(self.env.clone());
+        for entry in &env {
+            env::parse_assignment(entry)?;
+        }
+
         Ok(RunConfig {
             name: self.service_name(),
             command,
             working_dir: self.working_dir.clone().filter(|dir| !dir.is_empty()),
+            env,
+            env_file: self.env_file.clone().filter(|path| !path.is_empty()),
             logs: LogConfig {
                 disabled: self.disable_logs.unwrap_or(false),
                 rotation: self.log_rotation.unwrap_or(LogRotation::Daily),
@@ -184,6 +208,13 @@ impl ServiceConfig {
             },
         })
     }
+}
+
+fn non_empty(list: Option<Vec<String>>) -> Vec<String> {
+    list.unwrap_or_default()
+        .into_iter()
+        .filter(|item| !item.is_empty())
+        .collect()
 }
 
 /// How the wrapped process is launched.
@@ -206,6 +237,9 @@ pub struct RunConfig {
     pub name: String,
     pub command: CommandSpec,
     pub working_dir: Option<String>,
+    /// Unexpanded KEY=VALUE entries
+    pub env: Vec<String>,
+    pub env_file: Option<String>,
     pub logs: LogConfig,
 }
 
@@ -319,6 +353,39 @@ mod tests {
 
         let runtime = config.runtime().to_toml().unwrap();
         assert!(!runtime.contains("marco"));
+    }
+
+    #[test]
+    fn env_entries_are_validated_and_can_be_cleared() {
+        let run = parse_run(&[
+            "--cmd",
+            "app.exe",
+            "--env",
+            "RAILS_ENV=production",
+            "--env",
+            r"PATH=C:\Ruby\bin;%PATH%",
+            "--env-file",
+            r"C:\app\.env",
+        ])
+        .resolve()
+        .unwrap();
+        assert_eq!(
+            run.env,
+            vec!["RAILS_ENV=production", r"PATH=C:\Ruby\bin;%PATH%"]
+        );
+        assert_eq!(run.env_file.as_deref(), Some(r"C:\app\.env"));
+
+        assert!(
+            parse_run(&["--cmd", "a", "--env", "BROKEN"])
+                .resolve()
+                .is_err()
+        );
+
+        let cleared = parse_run(&["--cmd", "a", "--env", "", "--env-file", ""])
+            .resolve()
+            .unwrap();
+        assert!(cleared.env.is_empty());
+        assert_eq!(cleared.env_file, None);
     }
 
     #[test]

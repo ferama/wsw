@@ -2,6 +2,7 @@ use crate::{
     cli::ServiceConfig,
     pkg::{
         account::{AccountKind, resolve_password, scm_account_name},
+        env,
         service::install_service,
     },
 };
@@ -10,9 +11,18 @@ use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
 
 pub fn handle(config: ServiceConfig) {
     let name = config.service_name();
-    if let Err(e) = config.resolve() {
-        eprintln!("Invalid configuration: {e}");
-        std::process::exit(1);
+    let run_config = match config.resolve() {
+        Ok(run_config) => run_config,
+        Err(e) => {
+            eprintln!("Invalid configuration: {e}");
+            std::process::exit(1);
+        }
+    };
+    // The env file is read when the service starts, it may not exist yet
+    if let Some(path) = &run_config.env_file
+        && let Err(e) = env::load(Some(path), &[])
+    {
+        eprintln!("Warning: {e}");
     }
 
     let (account_name, account_password) = match config.account_name.clone() {

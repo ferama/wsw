@@ -4,6 +4,7 @@ use crate::{
     cli::ServiceConfig,
     pkg::{
         config::{LogConfig, LogRotation, RunConfig},
+        env,
         logs::setup_logging,
         registry,
         runner::run_command,
@@ -55,7 +56,10 @@ pub fn handle(cli_config: ServiceConfig) {
         // Not started by the SCM: run the command once in the foreground and
         // exit with its exit code
         let exit_code = match config {
-            Ok(config) => match run_command(&config) {
+            Ok(config) => match env::load(config.env_file.as_deref(), &config.env)
+                .map_err(std::io::Error::other)
+                .and_then(|env| run_command(&config, &env))
+            {
                 Ok(mut child) => match child.child.wait() {
                     Ok(status) => status.code().unwrap_or(1),
                     Err(e) => {

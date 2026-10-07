@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use tracing::{error, info};
 
 use crate::pkg::config::RunConfig;
+use crate::pkg::env;
 use crate::pkg::restart::Backoff;
 use crate::pkg::runner::run_command;
 use crate::pkg::stop_signal::StopSignal;
@@ -33,14 +34,26 @@ pub enum Outcome {
     Stopped,
     /// Terminated on its own because of the wrapped process. Holds the exit
     /// code of the last run, None if it could not be started.
-    // Not constructed yet: the supervisor always restarts the process
-    #[allow(dead_code)]
     Exited(Option<i32>),
 }
 
 /// Runs the wrapped process, restarting it when it exits, until `stop` is
 /// triggered.
 pub fn supervise(config: &RunConfig, stop: &StopSignal, status: &mut dyn StatusSink) -> Outcome {
+    // Resolved once, when the service starts
+    let env = match env::load(config.env_file.as_deref(), &config.env) {
+        Ok(env) => env,
+        Err(e) => {
+            error!("Invalid environment: {}", e);
+            return Outcome::Exited(None);
+        }
+    };
+    if !env.is_empty() {
+        // Values may hold secrets: only log the names
+        let names: Vec<&str> = env.iter().map(|(key, _)| key.as_str()).collect();
+        info!("Environment variables: {}", names.join(", "));
+    }
+
     let mut backoff = Backoff::new(RESTART_DELAY, RESTART_MAX_DELAY, RESTART_RESET_AFTER);
     let mut first_start = true;
     loop {
@@ -48,7 +61,7 @@ pub fn supervise(config: &RunConfig, stop: &StopSignal, status: &mut dyn StatusS
             return Outcome::Stopped;
         }
         let started_at = Instant::now();
-        let process = run_command(config);
+        let process = run_command(config, &env);
 
         // Only report Running once the child had its chance to start. A start
         // failure is not fatal: the loop keeps retrying.

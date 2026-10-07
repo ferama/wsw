@@ -135,7 +135,7 @@ fn find_working_dir(cmdline: &str, working_dir: Option<String>) -> PathBuf {
     cmd_working_dir
 }
 
-pub fn run_command(config: &RunConfig) -> io::Result<ChildProcess> {
+pub fn run_command(config: &RunConfig, env: &[(String, String)]) -> io::Result<ChildProcess> {
     let CommandSpec::Shell(cmdline) = &config.command;
     let disable_logs = config.logs.disabled;
 
@@ -166,6 +166,7 @@ pub fn run_command(config: &RunConfig) -> io::Result<ChildProcess> {
     let mut child = Command::new("cmd.exe")
         .arg("/C")
         .arg(cmdline)
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::null())
         .stdout(output())
         .stderr(output())
