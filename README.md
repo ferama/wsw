@@ -14,7 +14,7 @@ If you've ever tried to:
 - Avoid writing a Windows service in C++ or wrestling with the Windows API  
 - Escape painful `sc.exe` syntax and quoting errors  
 
-**Then WSW is for you.** It covers what [WinSW](https://github.com/winsw/winsw) does, as a single static executable that needs no .NET runtime and no XML file: one command line installs the service.
+**Then WSW is for you.** It is a single static executable with no runtime to install: one command line installs the service.
 
 
 ## ✅ Features
@@ -238,6 +238,9 @@ wsw.exe update  --config redmine.toml   # after editing it
 ```
 
 ## 🔁 WinSW → wsw
+
+Coming from [WinSW](https://github.com/winsw/winsw)? Many wsw options are
+modeled on its XML elements; this table maps them to the wsw flags.
 
 | WinSW XML | wsw |
 | --- | --- |
