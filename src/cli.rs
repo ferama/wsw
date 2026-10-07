@@ -1,53 +1,9 @@
-use std::str::FromStr;
+use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, command};
-use tracing_appender::rolling::Rotation;
+use clap::{Parser, Subcommand};
 
-use crate::pkg::service::SERVICE_DESCRIPTION_PREFIX;
-
-#[derive(Debug, Clone)]
-pub enum LogRotation {
-    Minutely,
-    Hourly,
-    Daily,
-    Never,
-}
-
-impl ToString for LogRotation {
-    fn to_string(&self) -> String {
-        match self {
-            LogRotation::Minutely => "minutely".to_string(),
-            LogRotation::Hourly => "hourly".to_string(),
-            LogRotation::Daily => "daily".to_string(),
-            LogRotation::Never => "never".to_string(),
-        }
-    }
-}
-
-impl FromStr for LogRotation {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "minutely" => Ok(LogRotation::Minutely),
-            "hourly" => Ok(LogRotation::Hourly),
-            "daily" => Ok(LogRotation::Daily),
-            "never" => Ok(LogRotation::Never),
-            _ => Err(format!("Invalid log rotation: {}", s)),
-        }
-    }
-}
-
-impl From<LogRotation> for Rotation {
-    fn from(lr: LogRotation) -> Self {
-        match lr {
-            LogRotation::Minutely => Rotation::MINUTELY,
-            LogRotation::Hourly => Rotation::HOURLY,
-            LogRotation::Daily => Rotation::DAILY,
-            LogRotation::Never => Rotation::NEVER,
-        }
-    }
-}
+use crate::pkg::SERVICE_DESCRIPTION_PREFIX;
+pub use crate::pkg::config::ServiceConfig;
 
 #[derive(Parser)]
 #[command(
@@ -75,6 +31,10 @@ pub enum Commands {
         /// This is useful for debugging the service itself
         #[arg(long, default_value_t = false)]
         full: bool,
+        /// Show the stderr of the wrapped process, for services installed
+        /// with --log-split
+        #[arg(long, default_value_t = false)]
+        stderr: bool,
     },
     /// Show the status of the Windows services managed from 'wsw'
     #[command(visible_alias = "ls")]
@@ -99,6 +59,9 @@ pub enum Commands {
         /// Name of the service to start
         #[arg(long, short, default_value_t = String::from(SERVICE_DESCRIPTION_PREFIX))]
         name: String,
+        /// Also show the whole effective configuration of the service
+        #[arg(long, short, default_value_t = false)]
+        verbose: bool,
     },
     /// Restart a service
     #[command()]
@@ -110,44 +73,27 @@ pub enum Commands {
     /// Install and start the Windows service
     #[command(visible_alias = "i")]
     Install {
-        /// Path and args for the executable to run as a service
-        #[arg(long, short)]
-        cmd: String,
-        /// Service working directory
-        /// If not specified, the target directory of the executable (cmd arg) will be used
-        #[arg(long)]
-        working_dir: Option<String>,
-        /// Name of the service to install
-        #[arg(long, short, default_value_t = String::from(SERVICE_DESCRIPTION_PREFIX))]
-        name: String,
-        /// If set to true, wrapped application logs will not be captured.
-        /// This means that following call to the "logs" subcommand will not
-        /// display any output regarding the wrapped app. This is useful in scenarios
-        /// where logs full managed from the wrapped application already.
-        #[arg(long, short, default_value_t = false)]
-        disable_logs: bool,
+        /// TOML file with the service options, named like the flags
+        /// (e.g. working-dir = 'C:\app'). Command line flags take precedence
+        #[arg(long = "config", value_name = "PATH")]
+        config_file: Option<PathBuf>,
 
-        /// Set the log rotation policy
-        /// * daily
-        /// * hourly
-        /// * minutely
-        /// * never
-        #[arg(long, short, default_value_t = LogRotation::Daily)]
-        log_rotation: LogRotation,
+        #[command(flatten)]
+        config: ServiceConfig,
+    },
+    /// Change the configuration of an installed service, without
+    /// reinstalling it. Only the given options change; list options (--env,
+    /// --depends-on...) are replaced as a whole and cleared by an empty
+    /// value. Restart the service to apply the changes
+    #[command(visible_alias = "reconfigure")]
+    Update {
+        /// TOML file with the options to change, named like the flags.
+        /// Command line flags take precedence
+        #[arg(long = "config", value_name = "PATH")]
+        config_file: Option<PathBuf>,
 
-        /// How many log files to keep
-        /// This is only used if the log rotation policy is set to something other than "never"
-        #[arg(long, short, default_value_t = 30)]
-        max_log_files: usize,
-
-        /// Run the service using specified account_name.
-        /// If the user is local put it in the format .\username
-        #[arg(long, requires = "account_password")]
-        account_name: Option<String>,
-
-        /// Run the service using specified account_password
-        #[arg(long, requires = "account_name")]
-        account_password: Option<String>
+        #[command(flatten)]
+        config: ServiceConfig,
     },
     /// Stop and uninstall the Windows service
     #[command(visible_alias = "u")]
@@ -160,33 +106,176 @@ pub enum Commands {
     /// This command is not intended to be called directly from the command line
     #[command(hide = true)]
     Run {
-        /// Path and args for the executable to run
-        #[arg(long, short)]
-        cmd: String,
-        /// Service working directory
-        /// If not specified, the target directory of the executable (cmd arg) will be used
-        #[arg(long)]
-        working_dir: Option<String>,
-        /// Name of the service to run
-        #[arg(long, short, default_value_t = String::from(SERVICE_DESCRIPTION_PREFIX))]
-        name: String,
-        /// If set to true, wrapped application logs will not be captured.
-        /// This means that following call to the "logs" subcommand will not
-        /// display any output regarding the wrapped app. This is useful in scenarios
-        /// where logs full managed from the wrapped application already.
-        #[arg(long, short, default_value_t = false)]
-        disable_logs: bool,
-        /// Set the log rotation policy
-        /// * daily
-        /// * hourly
-        /// * minutely
-        /// * never
-        #[arg(long, short, default_value_t = LogRotation::Daily)]
-        log_rotation: LogRotation,
+        /// TOML file with the service options
+        #[arg(long = "config", value_name = "PATH")]
+        config_file: Option<PathBuf>,
 
-        /// How many log files to keep
-        /// This is only used if the log rotation policy is set to something other than "never"
-        #[arg(long, short, default_value_t = 30)]
-        max_log_files: usize,
+        #[command(flatten)]
+        config: ServiceConfig,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_definition_is_valid() {
+        Cli::command().debug_assert();
+    }
+
+    fn parse(args: &[&str]) -> Result<Commands, clap::Error> {
+        let mut argv = vec!["wsw"];
+        argv.extend_from_slice(args);
+        Cli::try_parse_from(argv).map(|cli| cli.command.unwrap())
+    }
+
+    fn service_config(args: &[&str]) -> ServiceConfig {
+        match parse(args).unwrap() {
+            Commands::Install { config, .. } | Commands::Run { config, .. } => config,
+            _ => panic!("not install/run"),
+        }
+    }
+
+    /// Every invocation accepted by wsw 0.9.1 must keep its meaning.
+    #[test]
+    fn v0_9_1_invocations_still_parse() {
+        use crate::pkg::config::{CommandSpec, LogRotation};
+
+        // install, long flags
+        let config = service_config(&[
+            "install",
+            "--cmd",
+            r"C:\app\app.exe --x",
+            "--working-dir",
+            r"C:\app",
+            "--name",
+            "app",
+            "--disable-logs",
+            "--log-rotation",
+            "Hourly",
+            "--max-log-files",
+            "5",
+            "--account-name",
+            r".\marco",
+            "--account-password",
+            "pw",
+        ]);
+        let run = config.resolve().unwrap();
+        assert_eq!(run.name, "app");
+        assert_eq!(
+            run.command,
+            CommandSpec::Shell(r"C:\app\app.exe --x".into())
+        );
+        assert_eq!(run.working_dir.as_deref(), Some(r"C:\app"));
+        assert!(run.logs.disabled);
+        assert_eq!(run.logs.rotation, LogRotation::Hourly);
+        assert_eq!(run.logs.max_files, 5);
+        assert_eq!(config.account_name.as_deref(), Some(r".\marco"));
+        assert_eq!(config.account_password.as_deref(), Some("pw"));
+
+        // install, short flags and the 'i' alias, -d followed by other flags
+        for args in [
+            &[
+                "i", "-c", "app.exe", "-d", "-n", "app", "-l", "never", "-m", "3",
+            ][..],
+            &[
+                "install", "-d", "-c", "app.exe", "-n", "app", "-l", "never", "-m", "3",
+            ][..],
+            &[
+                "install", "-c", "app.exe", "-n", "app", "-l", "never", "-m", "3", "-d",
+            ][..],
+            &["install", "-c=app.exe", "-n=app", "-l=never", "-m=3", "-d"][..],
+            &[
+                "install",
+                "--cmd=app.exe",
+                "--name=app",
+                "--log-rotation=never",
+                "--max-log-files=3",
+                "--disable-logs",
+            ][..],
+        ] {
+            let run = service_config(args).resolve().unwrap();
+            assert_eq!(run.name, "app", "{args:?}");
+            assert_eq!(
+                run.command,
+                CommandSpec::Shell("app.exe".into()),
+                "{args:?}"
+            );
+            assert!(run.logs.disabled, "{args:?}");
+            assert_eq!(run.logs.rotation, LogRotation::Never, "{args:?}");
+            assert_eq!(run.logs.max_files, 3, "{args:?}");
+        }
+
+        // Grouped short flags
+        let run = service_config(&["install", "-dc", "app.exe"])
+            .resolve()
+            .unwrap();
+        assert!(run.logs.disabled);
+        assert_eq!(run.command, CommandSpec::Shell("app.exe".into()));
+
+        // Defaults of 0.9.1
+        let run = service_config(&["install", "-c", "app.exe"])
+            .resolve()
+            .unwrap();
+        assert_eq!(run.name, "wsw");
+        assert!(!run.logs.disabled);
+        assert_eq!(run.logs.rotation, LogRotation::Daily);
+        assert_eq!(run.logs.max_files, 30);
+
+        // The other commands, with their aliases and short flags
+        for args in [
+            &["logs"][..],
+            &["logs", "-n", "app", "-f", "--full"][..],
+            &["list"][..],
+            &["ls"][..],
+            &["start", "-n", "app"][..],
+            &["stop", "--name", "app"][..],
+            &["status", "-n", "app"][..],
+            &["restart", "-n", "app"][..],
+            &["uninstall", "-n", "app"][..],
+            &["u", "--name", "app"][..],
+        ] {
+            assert!(parse(args).is_ok(), "{args:?}");
+        }
+        match parse(&["logs", "-n", "app", "-f", "--full"]).unwrap() {
+            Commands::Logs {
+                name,
+                follow,
+                full,
+                stderr,
+            } => {
+                assert_eq!(name, "app");
+                assert!(follow && full && !stderr);
+            }
+            _ => panic!("not logs"),
+        }
+    }
+
+    #[test]
+    fn update_accepts_service_options() {
+        let cli = Cli::try_parse_from([
+            "wsw",
+            "update",
+            "--name",
+            "Redmine",
+            "--config",
+            "redmine.toml",
+            "--stop-timeout",
+            "30",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Commands::Update {
+                config_file,
+                config,
+            }) => {
+                assert_eq!(config_file, Some(PathBuf::from("redmine.toml")));
+                assert_eq!(config.name.as_deref(), Some("Redmine"));
+                assert_eq!(config.stop_timeout, Some(30));
+            }
+            _ => panic!("not an update command"),
+        }
+    }
 }

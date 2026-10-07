@@ -4,10 +4,36 @@ use std::{
     path::PathBuf,
 };
 
-use crate::pkg::logs::{self, SERVICE_LOG_PREFIX, get_log_filename_prefix};
+use crate::pkg::logs::{
+    self, SERVICE_LOG_PREFIX, get_err_log_filename_prefix, get_log_filename_prefix,
+};
+use crate::pkg::registry;
 
-pub fn handle(name: &str, follow: bool, full: bool) {
-    let log_dir = logs::get_log_dir();
+/// Prints a log line: with `full` as it is, otherwise only the output of the
+/// wrapped process, without timestamps and wsw messages.
+fn print_line(line: &str, full: bool, stderr: bool) {
+    if full {
+        println!("{}", line);
+    } else if stderr {
+        // Lines of the stderr file are `<timestamp> <line>`
+        println!("{}", line.get(20..).unwrap_or(line));
+    } else if let Some(message) = extract_message(line) {
+        println!("{}", message);
+    }
+}
+
+pub fn handle(name: &str, follow: bool, full: bool, stderr: bool) {
+    // The log directory may be configured (--log-dir)
+    let configured_dir = registry::read_config(name)
+        .ok()
+        .flatten()
+        .and_then(|config| config.log_dir);
+    let log_dir = logs::log_dir(configured_dir.as_deref());
+    let prefix = if stderr {
+        get_err_log_filename_prefix(name)
+    } else {
+        get_log_filename_prefix(name)
+    };
     let res = fs::read_dir(log_dir.clone());
     match res {
         Ok(content) => {
@@ -19,7 +45,7 @@ pub fn handle(name: &str, follow: bool, full: bool) {
                         && path
                             .file_name()
                             .and_then(|f| f.to_str())
-                            .map(|f| f.starts_with(get_log_filename_prefix(&name).as_str()))
+                            .map(|f| f.starts_with(prefix.as_str()))
                             .unwrap_or(false)
                 })
                 .collect();
@@ -41,13 +67,7 @@ pub fn handle(name: &str, follow: bool, full: bool) {
                 let reader = BufReader::new(file.try_clone().unwrap());
                 for line_result in reader.lines() {
                     if let Ok(line) = line_result {
-                        if full {
-                            println!("{}", line);
-                        } else {
-                            if let Some(message) = extract_message(&line) {
-                                println!("{}", message);
-                            }
-                        }
+                        print_line(&line, full, stderr);
                     } else {
                         eprintln!("Failed to read line from log file: {:?}", latest_log);
                     }
@@ -58,13 +78,7 @@ pub fn handle(name: &str, follow: bool, full: bool) {
                     let mut lines = reader.lines().peekable();
                     while lines.peek().is_some() {
                         if let Some(Ok(line)) = lines.next() {
-                            if full {
-                                println!("{}", line);
-                            } else {
-                                if let Some(message) = extract_message(&line) {
-                                    println!("{}", message);
-                                }
-                            }
+                            print_line(&line, full, stderr);
                         } else {
                             eprintln!("Failed to read line from log file: {:?}", latest_log);
                         }
@@ -75,7 +89,6 @@ pub fn handle(name: &str, follow: bool, full: bool) {
         }
         Err(e) => {
             eprintln!("Failed to read log directory: {}", e);
-            return;
         }
     }
 }

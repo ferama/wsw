@@ -1,5 +1,5 @@
 use regex::Regex;
-use std::io::{self};
+use std::io;
 use std::os::windows::io::AsRawHandle;
 use std::{
     path::{Path, PathBuf},
@@ -14,42 +14,170 @@ use windows_sys::Win32::System::JobObjects::{
     SetInformationJobObject,
 };
 
-use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE};
+use std::os::windows::process::CommandExt;
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+};
+use windows_sys::Win32::System::Threading::{
+    CREATE_SUSPENDED, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME,
+};
 
-use crate::pkg::log_writer::LogWriter;
+use crate::pkg::config::{CommandSpec, RunConfig};
+use crate::pkg::log_writer::{LogWriter, OutputStream};
 
-fn create_job_object() -> Result<HANDLE, std::io::Error> {
-    unsafe {
-        let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-        if handle.is_null() {
-            panic!("CreateJobObjectW failed, error={}", GetLastError());
+/// Owned Job Object handle. Closing it kills every process assigned to it
+/// because the job is created with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
+pub struct Job(HANDLE);
+
+impl Drop for Job {
+    fn drop(&mut self) {
+        // Safety: the handle is owned by this struct and closed only once.
+        unsafe {
+            CloseHandle(self.0);
         }
-
-        // Set the Job Object to kill all processes on close
-        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-
-        let set_result = SetInformationJobObject(
-            handle,
-            JobObjectExtendedLimitInformation,
-            &info as *const _ as *const _,
-            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-        );
-        if set_result == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!(
-                    "Failed to set information on Job Object: {}",
-                    GetLastError()
-                ),
-            ));
-        }
-
-        Ok(handle)
     }
 }
 
-fn find_working_dir(cmdline: &str, working_dir: Option<String>) -> PathBuf {
+fn create_job_object() -> io::Result<Job> {
+    // Safety: plain FFI call, the returned handle is checked before use.
+    let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if handle.is_null() {
+        return Err(io::Error::other(format!(
+            "CreateJobObjectW failed: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    let job = Job(handle);
+
+    // Set the Job Object to kill all processes on close
+    // Safety: JOBOBJECT_EXTENDED_LIMIT_INFORMATION is a plain C struct, all zeroes is valid.
+    let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+    // Safety: `info` outlives the call and the size matches the information class.
+    let set_result = unsafe {
+        SetInformationJobObject(
+            job.0,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    };
+    if set_result == 0 {
+        return Err(io::Error::other(format!(
+            "Failed to set information on Job Object: {}",
+            io::Error::last_os_error()
+        )));
+    }
+
+    Ok(job)
+}
+
+fn assign_to_job(job: &Job, child: &Child) -> io::Result<()> {
+    // Safety: both handles are valid for the duration of the call.
+    let assign_result = unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle()) };
+    if assign_result == 0 {
+        return Err(io::Error::other(format!(
+            "Failed to assign process to Job Object: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    Ok(())
+}
+
+/// Resumes the threads of a process created with CREATE_SUSPENDED.
+/// `std::process::Child` does not expose the handle of the main thread, so
+/// the threads are found with a Toolhelp snapshot.
+fn resume_process(pid: u32) -> io::Result<()> {
+    // Safety: plain FFI call, the handle is checked and closed below.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    let snapshot = Handle(snapshot);
+
+    let mut entry = THREADENTRY32 {
+        dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+        ..Default::default()
+    };
+    let mut resumed = 0;
+    // Safety: `entry` is a properly sized THREADENTRY32.
+    let mut more = unsafe { Thread32First(snapshot.0, &mut entry) } != 0;
+    while more {
+        if entry.th32OwnerProcessID == pid {
+            // Safety: the thread handle is checked and closed right away.
+            unsafe {
+                let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID);
+                if !thread.is_null() {
+                    let thread = Handle(thread);
+                    if ResumeThread(thread.0) != u32::MAX {
+                        resumed += 1;
+                    }
+                }
+            }
+        }
+        // Safety: as above.
+        more = unsafe { Thread32Next(snapshot.0, &mut entry) } != 0;
+    }
+    if resumed == 0 {
+        return Err(io::Error::other(format!(
+            "cannot resume process {}: {}",
+            pid,
+            io::Error::last_os_error()
+        )));
+    }
+    Ok(())
+}
+
+/// Owned kernel handle, closed on drop.
+struct Handle(HANDLE);
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        // Safety: the handle is owned by this struct and closed only once.
+        unsafe {
+            CloseHandle(self.0);
+        }
+    }
+}
+
+/// A running child process together with the Job Object that owns its
+/// whole process tree.
+pub struct ChildProcess {
+    pub child: Child,
+    // Dropping the job kills the whole process tree
+    job: Option<Job>,
+}
+
+impl ChildProcess {
+    pub fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// Kills the whole process tree and reaps the child.
+    pub fn kill_tree(&mut self) {
+        self.job.take();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for ChildProcess {
+    fn drop(&mut self) {
+        self.kill_tree();
+    }
+}
+
+/// The executable of the command, used to pick the default working directory.
+fn command_executable(command: &CommandSpec) -> Option<String> {
+    match command {
+        CommandSpec::Shell(cmdline) => extract_executable(cmdline),
+        CommandSpec::Exec { exe, .. } => Some(exe.clone()),
+    }
+}
+
+fn find_working_dir(command: &CommandSpec, working_dir: Option<String>) -> PathBuf {
     let mut cmd_working_dir: PathBuf = Path::new(".").to_path_buf();
 
     // Check if the working directory is provided and not empty
@@ -60,38 +188,74 @@ fn find_working_dir(cmdline: &str, working_dir: Option<String>) -> PathBuf {
         }
     }
 
-    // Attempt to find the working directory from the command line
-    // Split the command line into parts and get the first part as the executable name
-    if let Some(exe) = extract_executable(cmdline) {
+    // Attempt to find the working directory from the executable
+    if let Some(exe) = command_executable(command) {
         if let Some(parent) = Path::new(&exe).parent() {
             cmd_working_dir = Path::new(parent).to_path_buf();
         }
 
-        if cmd_working_dir == Path::new("") {
-            match which(exe) {
-                Ok(path) => {
-                    if let Some(parent) = path.parent() {
-                        cmd_working_dir = Path::new(parent).to_path_buf();
-                    }
-                }
-                Err(_) => {}
-            }
+        if cmd_working_dir == Path::new("")
+            && let Ok(path) = which(exe)
+            && let Some(parent) = path.parent()
+        {
+            cmd_working_dir = Path::new(parent).to_path_buf();
         }
     }
 
     cmd_working_dir
 }
 
-pub fn run_command(
-    cmdline: &str,
-    working_dir: Option<String>,
-    disable_logs: bool,
-) -> Result<(HANDLE, Child), std::io::Error> {
+/// Builds the process for a command: shell command lines go through
+/// `cmd.exe /C`, executables are started directly (the standard library
+/// quotes the arguments following the `CommandLineToArgvW` rules).
+fn build_command(command: &CommandSpec) -> Command {
+    match command {
+        CommandSpec::Shell(cmdline) => {
+            let mut process = Command::new("cmd.exe");
+            process.arg("/C").arg(cmdline);
+            process
+        }
+        CommandSpec::Exec { exe, args } => {
+            let mut process = Command::new(exe);
+            process.args(args);
+            process
+        }
+    }
+}
+
+pub fn run_command(config: &RunConfig, env: &[(String, String)]) -> io::Result<ChildProcess> {
     // detect the more appropriate working directory for the command line
-    let cmd_working_dir = find_working_dir(cmdline, working_dir);
-    info!("Command: {:?}", cmdline);
+    let cmd_working_dir = find_working_dir(&config.command, config.working_dir.clone());
+    info!("Command: {}", config.command);
     info!("Working directory: {:?}", cmd_working_dir);
 
+    let mut command = build_command(&config.command);
+    command
+        .envs(env.iter().map(|(k, v)| (k, v)))
+        .current_dir(cmd_working_dir);
+    spawn_in_job(command, !config.logs.disabled)
+}
+
+/// Runs an auxiliary shell command line (stop command, hooks) with the
+/// working directory and environment of the wrapped process, logging its
+/// output.
+pub fn spawn_shell_command(
+    cmdline: &str,
+    config: &RunConfig,
+    env: &[(String, String)],
+) -> io::Result<ChildProcess> {
+    let shell = CommandSpec::Shell(cmdline.to_string());
+    let cmd_working_dir = find_working_dir(&config.command, config.working_dir.clone());
+    let mut command = build_command(&shell);
+    command
+        .envs(env.iter().map(|(k, v)| (k, v)))
+        .current_dir(cmd_working_dir);
+    spawn_in_job(command, true)
+}
+
+/// Spawns a process in a new Job Object, optionally forwarding its output to
+/// the log.
+pub fn spawn_in_job(mut command: Command, capture_output: bool) -> io::Result<ChildProcess> {
     // Create a Job Object
     // The Job Object is used to manage the process and its children
     // and to ensure that all processes are terminated when the Job Object is closed
@@ -101,79 +265,61 @@ pub fn run_command(
     // unless the parent process is a Job Object. So we need to create a Job Object and assign the process to it.
     let job = create_job_object()?;
 
-    // Use the job handle to create a new process to ensure
-    // properly parsed command line arguments
-    let command = Command::new("cmd.exe")
-        .arg("/C")
-        .arg(cmdline)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .current_dir(cmd_working_dir)
-        .spawn()
-        .map(|mut child| {
-            if disable_logs {
-                return child;
-            }
-            if let Some(mut stdout) = child.stdout.take() {
-                if let Some(mut stderr) = child.stderr.take() {
-                    let mut stdout_logger = LogWriter;
-                    thread::spawn(move || {
-                        let _ = std::io::copy(&mut stdout, &mut stdout_logger);
-                    });
-
-                    let mut stderr_logger = LogWriter;
-                    thread::spawn(move || {
-                        let _ = std::io::copy(&mut stderr, &mut stderr_logger);
-                    });
-                } else {
-                    tracing::error!("can't get stderr");
-                }
-            } else {
-                tracing::error!("can't get stdout");
-            }
-            child
-        });
-
-    if let Ok(child) = &command {
-        let process_handle = child.as_raw_handle();
-        let assign_result = unsafe { AssignProcessToJobObject(job, process_handle) };
-        if assign_result == 0 {
-            unsafe {
-                let err = io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("Failed to assign process to Job Object: {}", GetLastError()),
-                );
-                CloseHandle(job);
-                return Err(err);
-            }
-        }
-    }
-
-    unsafe {
-        if let Ok(child) = command {
-            return Ok((std::mem::transmute(job), child));
+    // When logs are disabled nobody would drain the pipes and the child
+    // would block as soon as they are full, so discard the output instead.
+    let output = || {
+        if capture_output {
+            Stdio::piped()
         } else {
-            CloseHandle(job);
-            return Err(command.unwrap_err());
+            Stdio::null()
         }
+    };
+
+    // Started suspended and resumed only once in the Job: a process it
+    // spawns right away could otherwise escape the Job, and survive the stop
+    let mut child = command
+        .creation_flags(CREATE_SUSPENDED)
+        .stdin(Stdio::null())
+        .stdout(output())
+        .stderr(output())
+        .spawn()?;
+
+    if let Err(e) = assign_to_job(&job, &child).and_then(|_| resume_process(child.id())) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(e);
     }
+
+    if let Some(mut stdout) = child.stdout.take() {
+        let mut stdout_logger = LogWriter::new(OutputStream::Stdout);
+        thread::spawn(move || {
+            let _ = std::io::copy(&mut stdout, &mut stdout_logger);
+        });
+    }
+    if let Some(mut stderr) = child.stderr.take() {
+        let mut stderr_logger = LogWriter::new(OutputStream::Stderr);
+        thread::spawn(move || {
+            let _ = std::io::copy(&mut stderr, &mut stderr_logger);
+        });
+    }
+
+    Ok(ChildProcess {
+        child,
+        job: Some(job),
+    })
 }
 
 fn extract_executable(command: &str) -> Option<String> {
     // Regex to capture quoted or unquoted executable paths at the beginning.
     // For unquoted paths, we look for patterns ending with .exe (common executable extension)
     // followed by a space and arguments, or end of string.
-    let re = Regex::new(r#"^(?:"([^"]+)"|([^"]*\.exe))(?:\s|$)"#).unwrap();
+    let re = Regex::new(r#"^(?:"([^"]+)"|([^"]*\.exe))(?:\s|$)"#).ok()?;
 
-    re.captures(command).map(|caps| {
-        // Choose the matching capture group: either quoted (1) or unquoted (2)
-        caps.get(1)
-            .or_else(|| caps.get(2))
-            .unwrap()
-            .as_str()
-            .to_string()
-    })
+    let caps = re.captures(command)?;
+    // Choose the matching capture group: either quoted (1) or unquoted (2)
+    caps.get(1)
+        .or_else(|| caps.get(2))
+        .map(|m| m.as_str().to_string())
 }
 
 #[cfg(test)]
@@ -220,23 +366,33 @@ mod tests {
 
     #[test]
     fn test_find_working_dir_with_provided_working_dir() {
-        let cmdline = r#"C:\SomeApp\app.exe --arg1"#;
+        let cmdline = CommandSpec::Shell(r#"C:\SomeApp\app.exe --arg1"#.into());
         let working_dir = Some(String::from(r#"C:\CustomDir"#));
-        let result = find_working_dir(cmdline, working_dir);
+        let result = find_working_dir(&cmdline, working_dir);
         assert_eq!(result, PathBuf::from(r#"C:\CustomDir"#));
     }
 
     #[test]
     fn test_find_working_dir_with_executable_path() {
-        let cmdline = r#"C:\SomeApp\app.exe --arg1"#;
-        let result = find_working_dir(cmdline, None);
+        let cmdline = CommandSpec::Shell(r#"C:\SomeApp\app.exe --arg1"#.into());
+        let result = find_working_dir(&cmdline, None);
         assert_eq!(result, PathBuf::from(r#"C:\SomeApp"#));
     }
 
     #[test]
+    fn test_find_working_dir_with_exe() {
+        let command = CommandSpec::Exec {
+            exe: r"C:\Redmine\ruby\bin\ruby.exe".into(),
+            args: vec!["exec".into()],
+        };
+        let result = find_working_dir(&command, None);
+        assert_eq!(result, PathBuf::from(r"C:\Redmine\ruby\bin"));
+    }
+
+    #[test]
     fn test_find_working_dir_with_empty_command() {
-        let cmdline = r#""#;
-        let result = find_working_dir(cmdline, None);
+        let cmdline = CommandSpec::Shell(String::new());
+        let result = find_working_dir(&cmdline, None);
         assert_eq!(result, PathBuf::from(r#"."#));
     }
 }
