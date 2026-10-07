@@ -1,9 +1,5 @@
-use std::{
-    io,
-    sync::OnceLock,
-    time::{Duration, Instant},
-};
-use tracing::{error, info};
+use std::{io, sync::OnceLock, time::Duration};
+use tracing::error;
 use windows::{
     Win32::System::Services::*,
     core::{PCWSTR, PWSTR},
@@ -21,11 +17,12 @@ use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
 use std::ffi::OsString;
 
-use crate::cli::LogRotation;
-
-use super::restart::{Backoff, service_specific_code};
-use super::runner::run_command;
+use super::config::{RunConfig, ServiceConfig};
+use super::registry;
+use super::restart::service_specific_code;
 use super::stop_signal::StopSignal;
+use super::supervisor::{Outcome, STOP_WAIT_HINT, StatusSink, supervise};
+use windows_sys::Win32::Foundation::ERROR_BAD_CONFIGURATION;
 
 const SERVICE_TYPE: ServiceType = ServiceType::OWN_PROCESS;
 pub use super::SERVICE_DESCRIPTION_PREFIX;
@@ -38,30 +35,23 @@ pub fn get_service_desc(name: &str) -> String {
     }
 }
 
-/// Options used by the service entry point. They are resolved by the `run`
+/// Configuration of the service process. It is resolved by the `run`
 /// command before the service dispatcher is started, so that `service_main`
-/// never has to parse the command line again (and never fails doing so).
-#[derive(Debug, Clone)]
-pub struct RunOptions {
-    pub name: String,
-    pub cmd: String,
-    pub working_dir: Option<String>,
-    pub disable_logs: bool,
-}
+/// never has to parse it again. An invalid configuration is kept as an error
+/// so that it can be reported to the SCM.
+static RUN_CONFIG: OnceLock<Result<RunConfig, String>> = OnceLock::new();
 
-static RUN_OPTIONS: OnceLock<RunOptions> = OnceLock::new();
-
-pub fn set_run_options(options: RunOptions) {
-    let _ = RUN_OPTIONS.set(options);
+pub fn set_run_config(config: Result<RunConfig, String>) {
+    let _ = RUN_CONFIG.set(config);
 }
 
 pub fn service_main(_args: Vec<OsString>) {
-    let Some(options) = RUN_OPTIONS.get() else {
-        error!("Service started without run options");
+    let Some(config) = RUN_CONFIG.get() else {
+        error!("Service started without configuration");
         return;
     };
-    if let Err(e) = run_service(options) {
-        error!("Service '{}' failed: {}", options.name, e);
+    if let Err(e) = run_service(config) {
+        error!("Service failed: {}", e);
     }
 }
 
@@ -136,107 +126,60 @@ impl StatusReporter {
     }
 }
 
+impl StatusSink for StatusReporter {
+    fn running(&mut self) {
+        StatusReporter::running(self);
+    }
+
+    fn stopping(&mut self, wait_hint: Duration) {
+        self.pending(ServiceState::StopPending, wait_hint);
+    }
+}
+
 /// How long the SCM should wait for the service to leave the start pending state.
 const START_WAIT_HINT: Duration = Duration::from_secs(10);
-/// How long the SCM should wait for the service to leave the stop pending state.
-const STOP_WAIT_HINT: Duration = Duration::from_secs(10);
-/// How often the child process is checked for exit.
-const POLL_INTERVAL: Duration = Duration::from_millis(500);
-/// Restart backoff: first delay, maximum delay and the uptime after which
-/// the child is considered stable and the backoff starts over.
-const RESTART_DELAY: Duration = Duration::from_secs(1);
-const RESTART_MAX_DELAY: Duration = Duration::from_secs(60);
-const RESTART_RESET_AFTER: Duration = Duration::from_secs(60);
 
-fn run_service(options: &RunOptions) -> windows_service::Result<()> {
+fn run_service(config: &Result<RunConfig, String>) -> windows_service::Result<()> {
     let stop = StopSignal::new();
     let stop_handler = stop.clone();
 
+    let name = match config {
+        Ok(config) => config.name.clone(),
+        Err(_) => String::new(),
+    };
     let event_handler =
-        service_control_handler::register(
-            &options.name,
-            move |control_event| match control_event {
-                ServiceControl::Stop => {
-                    stop_handler.trigger();
-                    ServiceControlHandlerResult::NoError
-                }
-                ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
-                _ => ServiceControlHandlerResult::NotImplemented,
-            },
-        )?;
+        service_control_handler::register(&name, move |control_event| match control_event {
+            // On machine shutdown the child gets the same orderly stop as on
+            // a regular stop request. Preshutdown is preferred by the SCM
+            // because it allows to block the shutdown up to the preshutdown
+            // timeout, Shutdown is handled too for completeness.
+            ServiceControl::Stop | ServiceControl::Shutdown | ServiceControl::Preshutdown => {
+                stop_handler.trigger();
+                ServiceControlHandlerResult::NoError
+            }
+            ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+            _ => ServiceControlHandlerResult::NotImplemented,
+        })?;
 
     let mut status = StatusReporter::new(event_handler);
-    status.pending(ServiceState::StartPending, START_WAIT_HINT);
 
-    let mut backoff = Backoff::new(RESTART_DELAY, RESTART_MAX_DELAY, RESTART_RESET_AFTER);
-    let mut first_start = true;
-    // None when stopped on request, otherwise the exit code of the child
-    // that made the service terminate on its own (None if it could not be
-    // started). With the current always-restart behaviour the loop only ends
-    // on request.
-    let outcome: Option<Option<i32>> = loop {
-        if stop.is_triggered() {
-            break None;
-        }
-        let started_at = Instant::now();
-        let process = run_command(
-            &options.cmd,
-            options.working_dir.clone(),
-            options.disable_logs,
-        );
-
-        // Only report Running once the child had its chance to start. A start
-        // failure is not fatal: the loop keeps retrying, as it always did.
-        if first_start {
-            first_start = false;
-            status.running();
-        }
-
-        match process {
-            Err(e) => {
-                error!("Failed to start command: {}", e);
-            }
-            Ok(mut process) => {
-                info!("Child process started with PID: {}", process.id());
-
-                // Wait for the child to exit or for a stop request
-                while !stop.wait_timeout(POLL_INTERVAL) {
-                    match process.child.try_wait() {
-                        Ok(Some(status)) => {
-                            error!("Child exited with status: {}", status);
-                            break;
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            info!("Failed to check child status: {}", e);
-                            break;
-                        }
-                    }
-                }
-
-                if stop.is_triggered() {
-                    status.pending(ServiceState::StopPending, STOP_WAIT_HINT);
-                    info!("Stopping child process with PID: {}", process.id());
-                }
-                process.kill_tree();
-            }
-        }
-
-        if !stop.is_triggered() {
-            let delay = backoff.next_delay(started_at.elapsed());
-            info!(
-                "Restarting in {:?} (consecutive failures: {})",
-                delay,
-                backoff.consecutive_failures()
-            );
-            stop.wait_timeout(delay);
+    let config = match config {
+        Ok(config) => config,
+        Err(e) => {
+            error!("Invalid service configuration: {}", e);
+            status.stopped(ServiceExitCode::Win32(ERROR_BAD_CONFIGURATION));
+            return Ok(());
         }
     };
 
+    status.pending(ServiceState::StartPending, START_WAIT_HINT);
+
+    let outcome = supervise(config, &stop, &mut status);
+
     status.pending(ServiceState::StopPending, STOP_WAIT_HINT);
     let exit_code = match outcome {
-        None => ServiceExitCode::Win32(0),
-        Some(child_exit_code) => {
+        Outcome::Stopped => ServiceExitCode::Win32(0),
+        Outcome::Exited(child_exit_code) => {
             let code = service_specific_code(child_exit_code);
             error!(
                 "Service terminated on its own, reporting exit code {}",
@@ -249,60 +192,46 @@ fn run_service(options: &RunOptions) -> windows_service::Result<()> {
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Installs the service: the ImagePath only carries the service name, the
+/// rest of the configuration is persisted in the registry.
 pub fn install_service(
-    name: &str,
-    working_dir: Option<String>,
-    service_cmd: &str,
-    disable_logs: bool,
-    log_rotation: LogRotation,
-    max_log_files: usize,
+    config: &ServiceConfig,
     account_name: Option<String>,
     account_password: Option<String>,
 ) -> windows_service::Result<()> {
+    let name = config.service_name();
     let manager_access = ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE;
     let service_manager = ServiceManager::local_computer(None::<&str>, manager_access)?;
 
     let executable_path = std::env::current_exe().map_err(windows_service::Error::Winapi)?;
 
-    let mut launch_arguments = vec![
+    let launch_arguments = vec![
         OsString::from("run"),
-        OsString::from("--cmd"),
-        OsString::from(service_cmd),
         OsString::from("--name"),
-        OsString::from(name),
-        OsString::from("--log-rotation"),
-        OsString::from(log_rotation.to_string()),
-        OsString::from("--max-log-files"),
-        OsString::from(max_log_files.to_string()),
+        OsString::from(&name),
     ];
 
-    if let Some(dir) = working_dir {
-        launch_arguments.push(OsString::from("--working-dir"));
-        launch_arguments.push(OsString::from(dir));
-    }
-    if disable_logs {
-        launch_arguments.push(OsString::from("--disable-logs"));
-    }
-
-    let an = account_name.map(OsString::from);
-
-    let ap = account_password.map(OsString::from);
-
     let service_info = ServiceInfo {
-        name: OsString::from(name),
-        display_name: OsString::from(get_service_desc(name)),
+        name: OsString::from(&name),
+        display_name: OsString::from(get_service_desc(&name)),
         service_type: SERVICE_TYPE,
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
         executable_path,
         launch_arguments,
         dependencies: vec![],
-        account_name: an,
-        account_password: ap,
+        account_name: account_name.map(OsString::from),
+        account_password: account_password.map(OsString::from),
     };
 
-    let service = service_manager.create_service(&service_info, ServiceAccess::START)?;
+    let service = service_manager
+        .create_service(&service_info, ServiceAccess::START | ServiceAccess::DELETE)?;
+
+    if let Err(e) = registry::write_config(&name, config) {
+        // Do not leave behind a service that cannot start
+        let _ = service.delete();
+        return Err(windows_service::Error::Winapi(e));
+    }
 
     service.start::<std::ffi::OsString>(&[])?;
     Ok(())
@@ -514,7 +443,11 @@ pub fn list_services_with_status() -> windows_service::Result<Vec<(String, Strin
         for svc in services {
             let name = widestring_to_string(svc.lpServiceName);
             let display_name = widestring_to_string(svc.lpDisplayName);
-            if display_name.starts_with(SERVICE_DESCRIPTION_PREFIX) {
+            // Services installed by older versions are recognized by their
+            // display name, newer ones by the marker in the registry
+            if display_name.starts_with(SERVICE_DESCRIPTION_PREFIX)
+                || registry::is_managed_by_wsw(&name)
+            {
                 let status = match svc.ServiceStatusProcess.dwCurrentState {
                     SERVICE_RUNNING => "Running".to_string(),
                     SERVICE_STOPPED => "Stopped".to_string(),

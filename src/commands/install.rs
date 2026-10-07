@@ -1,5 +1,5 @@
 use crate::{
-    cli::LogRotation,
+    cli::ServiceConfig,
     pkg::{
         account::{AccountKind, resolve_password, scm_account_name},
         service::install_service,
@@ -8,23 +8,21 @@ use crate::{
 use windows_service::Error;
 use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
 
-#[allow(clippy::too_many_arguments)]
-pub fn handle(
-    cmd: &str,
-    working_dir: Option<String>,
-    name: &str,
-    disable_logs: bool,
-    log_rotation: LogRotation,
-    max_log_files: usize,
-    account_name: Option<String>,
-    account_password: Option<String>,
-) {
-    let (account_name, account_password) = match account_name {
+pub fn handle(config: ServiceConfig) {
+    let name = config.service_name();
+    if let Err(e) = config.resolve() {
+        eprintln!("Invalid configuration: {e}");
+        std::process::exit(1);
+    }
+
+    let (account_name, account_password) = match config.account_name.clone() {
         Some(account) => {
-            if account_password.is_some() && !AccountKind::classify(&account).requires_password() {
+            if config.account_password.is_some()
+                && !AccountKind::classify(&account).requires_password()
+            {
                 eprintln!("Ignoring --account-password: '{account}' has no password.");
             }
-            match resolve_password(&account, account_password) {
+            match resolve_password(&account, config.account_password.clone()) {
                 Ok(password) => (scm_account_name(&account), password),
                 Err(e) => {
                     eprintln!("{e}");
@@ -35,16 +33,7 @@ pub fn handle(
         None => (None, None),
     };
 
-    match install_service(
-        name,
-        working_dir,
-        cmd,
-        disable_logs,
-        log_rotation,
-        max_log_files,
-        account_name,
-        account_password,
-    ) {
+    match install_service(&config, account_name, account_password) {
         Ok(_) => println!("Service '{}' installed successfully.", name),
         Err(Error::Winapi(e)) => match e.raw_os_error() {
             Some(code) if code as u32 == ERROR_ACCESS_DENIED => {

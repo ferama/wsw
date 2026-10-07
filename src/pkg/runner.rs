@@ -16,6 +16,7 @@ use windows_sys::Win32::System::JobObjects::{
 
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 
+use crate::pkg::config::{CommandSpec, RunConfig};
 use crate::pkg::log_writer::LogWriter;
 
 /// Owned Job Object handle. Closing it kills every process assigned to it
@@ -134,13 +135,12 @@ fn find_working_dir(cmdline: &str, working_dir: Option<String>) -> PathBuf {
     cmd_working_dir
 }
 
-pub fn run_command(
-    cmdline: &str,
-    working_dir: Option<String>,
-    disable_logs: bool,
-) -> io::Result<ChildProcess> {
+pub fn run_command(config: &RunConfig) -> io::Result<ChildProcess> {
+    let CommandSpec::Shell(cmdline) = &config.command;
+    let disable_logs = config.logs.disabled;
+
     // detect the more appropriate working directory for the command line
-    let cmd_working_dir = find_working_dir(cmdline, working_dir);
+    let cmd_working_dir = find_working_dir(cmdline, config.working_dir.clone());
     info!("Command: {:?}", cmdline);
     info!("Working directory: {:?}", cmd_working_dir);
 

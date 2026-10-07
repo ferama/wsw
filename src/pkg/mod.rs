@@ -1,11 +1,16 @@
 pub mod account;
+pub mod config;
 pub mod log_writer;
 pub mod logs;
+#[cfg(windows)]
+pub mod registry;
 pub mod restart;
 #[cfg(windows)]
 pub mod runner;
 #[cfg(windows)]
 pub mod service;
 pub mod stop_signal;
+#[cfg(windows)]
+pub mod supervisor;
 
 pub const SERVICE_DESCRIPTION_PREFIX: &str = "wsw";

@@ -1,54 +1,7 @@
-use std::str::FromStr;
-
 use clap::{Parser, Subcommand};
-use tracing_appender::rolling::Rotation;
 
 use crate::pkg::SERVICE_DESCRIPTION_PREFIX;
-
-#[derive(Debug, Clone)]
-pub enum LogRotation {
-    Minutely,
-    Hourly,
-    Daily,
-    Never,
-}
-
-impl std::fmt::Display for LogRotation {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            LogRotation::Minutely => "minutely",
-            LogRotation::Hourly => "hourly",
-            LogRotation::Daily => "daily",
-            LogRotation::Never => "never",
-        };
-        f.write_str(s)
-    }
-}
-
-impl FromStr for LogRotation {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "minutely" => Ok(LogRotation::Minutely),
-            "hourly" => Ok(LogRotation::Hourly),
-            "daily" => Ok(LogRotation::Daily),
-            "never" => Ok(LogRotation::Never),
-            _ => Err(format!("Invalid log rotation: {}", s)),
-        }
-    }
-}
-
-impl From<LogRotation> for Rotation {
-    fn from(lr: LogRotation) -> Self {
-        match lr {
-            LogRotation::Minutely => Rotation::MINUTELY,
-            LogRotation::Hourly => Rotation::HOURLY,
-            LogRotation::Daily => Rotation::DAILY,
-            LogRotation::Never => Rotation::NEVER,
-        }
-    }
-}
+pub use crate::pkg::config::{LogRotation, ServiceConfig};
 
 #[derive(Parser)]
 #[command(
@@ -111,47 +64,8 @@ pub enum Commands {
     /// Install and start the Windows service
     #[command(visible_alias = "i")]
     Install {
-        /// Path and args for the executable to run as a service
-        #[arg(long, short)]
-        cmd: String,
-        /// Service working directory
-        /// If not specified, the target directory of the executable (cmd arg) will be used
-        #[arg(long)]
-        working_dir: Option<String>,
-        /// Name of the service to install
-        #[arg(long, short, default_value_t = String::from(SERVICE_DESCRIPTION_PREFIX))]
-        name: String,
-        /// If set to true, wrapped application logs will not be captured.
-        /// This means that following call to the "logs" subcommand will not
-        /// display any output regarding the wrapped app. This is useful in scenarios
-        /// where logs full managed from the wrapped application already.
-        #[arg(long, short, default_value_t = false)]
-        disable_logs: bool,
-
-        /// Set the log rotation policy
-        /// * daily
-        /// * hourly
-        /// * minutely
-        /// * never
-        #[arg(long, short, default_value_t = LogRotation::Daily)]
-        log_rotation: LogRotation,
-
-        /// How many log files to keep
-        /// This is only used if the log rotation policy is set to something other than "never"
-        #[arg(long, short, default_value_t = 30)]
-        max_log_files: usize,
-
-        /// Run the service using the specified account (default: LocalSystem).
-        /// Built-in accounts need no password: LocalSystem, LocalService,
-        /// NetworkService (optionally prefixed by 'NT AUTHORITY\'), virtual
-        /// accounts ('NT SERVICE\<name>') and gMSA ('DOMAIN\name$').
-        /// If the user is local put it in the format .\username
-        #[arg(long)]
-        account_name: Option<String>,
-
-        /// Password of --account-name, required for regular user accounts only
-        #[arg(long, requires = "account_name")]
-        account_password: Option<String>,
+        #[command(flatten)]
+        config: ServiceConfig,
     },
     /// Stop and uninstall the Windows service
     #[command(visible_alias = "u")]
@@ -164,33 +78,18 @@ pub enum Commands {
     /// This command is not intended to be called directly from the command line
     #[command(hide = true)]
     Run {
-        /// Path and args for the executable to run
-        #[arg(long, short)]
-        cmd: String,
-        /// Service working directory
-        /// If not specified, the target directory of the executable (cmd arg) will be used
-        #[arg(long)]
-        working_dir: Option<String>,
-        /// Name of the service to run
-        #[arg(long, short, default_value_t = String::from(SERVICE_DESCRIPTION_PREFIX))]
-        name: String,
-        /// If set to true, wrapped application logs will not be captured.
-        /// This means that following call to the "logs" subcommand will not
-        /// display any output regarding the wrapped app. This is useful in scenarios
-        /// where logs full managed from the wrapped application already.
-        #[arg(long, short, default_value_t = false)]
-        disable_logs: bool,
-        /// Set the log rotation policy
-        /// * daily
-        /// * hourly
-        /// * minutely
-        /// * never
-        #[arg(long, short, default_value_t = LogRotation::Daily)]
-        log_rotation: LogRotation,
-
-        /// How many log files to keep
-        /// This is only used if the log rotation policy is set to something other than "never"
-        #[arg(long, short, default_value_t = 30)]
-        max_log_files: usize,
+        #[command(flatten)]
+        config: ServiceConfig,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_definition_is_valid() {
+        Cli::command().debug_assert();
+    }
 }

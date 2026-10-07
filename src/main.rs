@@ -32,42 +32,9 @@ fn main() {
         Some(Commands::Stop { name }) => commands::stop::handle(&name),
         Some(Commands::Status { name }) => commands::status::handle(&name),
         Some(Commands::Restart { name }) => commands::restart::handle(&name),
-        Some(Commands::Install {
-            cmd,
-            working_dir,
-            name,
-            disable_logs,
-            log_rotation,
-            max_log_files,
-            account_name,
-            account_password,
-        }) => commands::install::handle(
-            &cmd,
-            working_dir,
-            &name,
-            disable_logs,
-            log_rotation,
-            max_log_files,
-            account_name,
-            account_password,
-        ),
-
+        Some(Commands::Install { config }) => commands::install::handle(config),
         Some(Commands::Uninstall { name }) => commands::uninstall::handle(&name),
-        Some(Commands::Run {
-            cmd,
-            working_dir,
-            name,
-            disable_logs,
-            log_rotation,
-            max_log_files,
-        }) => commands::run::handle(
-            &cmd,
-            working_dir,
-            &name,
-            disable_logs,
-            log_rotation,
-            max_log_files,
-        ),
+        Some(Commands::Run { config }) => commands::run::handle(config),
         None => {
             Cli::command().print_help().unwrap();
             std::process::exit(0);
