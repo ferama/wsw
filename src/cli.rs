@@ -141,12 +141,15 @@ pub enum Commands {
         #[arg(long, short, default_value_t = 30)]
         max_log_files: usize,
 
-        /// Run the service using specified account_name.
+        /// Run the service using the specified account (default: LocalSystem).
+        /// Built-in accounts need no password: LocalSystem, LocalService,
+        /// NetworkService (optionally prefixed by 'NT AUTHORITY\'), virtual
+        /// accounts ('NT SERVICE\<name>') and gMSA ('DOMAIN\name$').
         /// If the user is local put it in the format .\username
-        #[arg(long, requires = "account_password")]
+        #[arg(long)]
         account_name: Option<String>,
 
-        /// Run the service using specified account_password
+        /// Password of --account-name, required for regular user accounts only
         #[arg(long, requires = "account_name")]
         account_password: Option<String>,
     },

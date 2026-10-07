@@ -1,3 +1,4 @@
+pub mod account;
 pub mod log_writer;
 pub mod logs;
 pub mod restart;

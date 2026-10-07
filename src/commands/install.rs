@@ -1,4 +1,10 @@
-use crate::{cli::LogRotation, pkg::service::install_service};
+use crate::{
+    cli::LogRotation,
+    pkg::{
+        account::{AccountKind, resolve_password, scm_account_name},
+        service::install_service,
+    },
+};
 use windows_service::Error;
 use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
 
@@ -13,6 +19,22 @@ pub fn handle(
     account_name: Option<String>,
     account_password: Option<String>,
 ) {
+    let (account_name, account_password) = match account_name {
+        Some(account) => {
+            if account_password.is_some() && !AccountKind::classify(&account).requires_password() {
+                eprintln!("Ignoring --account-password: '{account}' has no password.");
+            }
+            match resolve_password(&account, account_password) {
+                Ok(password) => (scm_account_name(&account), password),
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        None => (None, None),
+    };
+
     match install_service(
         name,
         working_dir,
