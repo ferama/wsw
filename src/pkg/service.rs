@@ -266,8 +266,8 @@ pub fn uninstall_service(name: &str) -> windows_service::Result<()> {
         ServiceState::Stopped,
         std::time::Duration::from_secs(10),
     ) {
-        Ok(_) => tracing::info!("Service '{}' is now stopped.", name),
-        Err(e) => tracing::error!("Failed to wait for service '{}': {}", name, e),
+        Ok(_) => println!("Service '{}' is now stopped.", name),
+        Err(e) => eprintln!("Failed to wait for service '{}' to stop: {}", name, e),
     }
 
     // Now delete it
@@ -374,7 +374,6 @@ pub fn wait_for_service_status(
             last_progress = std::time::Instant::now();
         }
         if last_progress.elapsed() > timeout.max(status.wait_hint) {
-            tracing::error!("Timeout waiting for service status to change");
             return Err(windows_service::Error::Winapi(io::Error::new(
                 io::ErrorKind::TimedOut,
                 "operation timed out",

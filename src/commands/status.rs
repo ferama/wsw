@@ -8,7 +8,9 @@ use prettytable::{Table, row};
 use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SERVICE_DOES_NOT_EXIST};
 
 pub fn handle(name: &str, verbose: bool) {
-    match get_service_status(name) {
+    let result = get_service_status(name);
+    let failed = result.is_err();
+    match result {
         Ok(status) => {
             let mut table = Table::new();
 
@@ -60,6 +62,9 @@ pub fn handle(name: &str, verbose: bool) {
         Err(e) => {
             eprintln!("Failed to get service status '{}': {:?}", name, e);
         }
+    }
+    if failed {
+        std::process::exit(1);
     }
 }
 

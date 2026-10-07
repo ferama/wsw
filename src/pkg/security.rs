@@ -7,7 +7,7 @@ use std::ptr;
 
 use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
 
-use crate::pkg::account::lookup_account_name;
+use crate::pkg::account::{builtin_sid, lookup_account_name};
 use windows_sys::Win32::Security::Authentication::Identity::{
     LSA_HANDLE, LSA_OBJECT_ATTRIBUTES, LSA_UNICODE_STRING, LsaAddAccountRights, LsaClose,
     LsaNtStatusToWinError, LsaOpenPolicy, POLICY_CREATE_ACCOUNT, POLICY_LOOKUP_NAMES,
@@ -30,6 +30,9 @@ fn wide(s: &str) -> Vec<u16> {
 
 /// Resolves an account name (None for LocalSystem) to its SID.
 fn account_sid(account: Option<&str>) -> io::Result<Vec<u8>> {
+    if let Some(sid) = builtin_sid(account) {
+        return Ok(sid);
+    }
     let name = lookup_account_name(account);
     let wide_name = wide(&name);
     let mut sid_size: u32 = 0;

@@ -45,7 +45,9 @@ pub fn handle(config_file: Option<PathBuf>, config: ServiceConfig) {
         eprintln!("Ignoring --account-password: '{account}' has no password.");
     }
 
-    match install_service(&config, &scm) {
+    let result = install_service(&config, &scm);
+    let failed = result.is_err();
+    match result {
         Ok(_) if scm.start_type == StartType::Disabled => {
             println!("Service '{}' installed successfully (disabled).", name)
         }
@@ -59,5 +61,8 @@ pub fn handle(config_file: Option<PathBuf>, config: ServiceConfig) {
             }
         },
         Err(e) => eprintln!("Failed to install service '{}': {}", name, e),
+    }
+    if failed {
+        std::process::exit(1);
     }
 }

@@ -79,9 +79,36 @@ pub fn lookup_account_name(account: Option<&str>) -> String {
         AccountKind::NetworkService => r"NT AUTHORITY\NETWORK SERVICE".to_string(),
         _ => {
             let account = account.trim();
-            account.strip_prefix(r".\").unwrap_or(account).to_string()
+            match account.strip_prefix(r".\") {
+                // Qualified with the computer name, so that the lookup does
+                // not query the domain (which may be unreachable)
+                Some(user) => match std::env::var("COMPUTERNAME") {
+                    Ok(computer) if !computer.is_empty() => format!(r"{}\{}", computer, user),
+                    _ => user.to_string(),
+                },
+                None => account.to_string(),
+            }
         }
     }
+}
+
+/// Binary SID of the built-in accounts, which have well-known identifiers
+/// and need no lookup at all: S-1-5-18 (LocalSystem), S-1-5-19
+/// (LocalService) and S-1-5-20 (NetworkService). Looking them up by name
+/// may involve the domain, failing when it cannot be reached. `account` is
+/// None for LocalSystem.
+pub fn builtin_sid(account: Option<&str>) -> Option<Vec<u8>> {
+    let rid: u32 = match account.map(AccountKind::classify) {
+        None | Some(AccountKind::LocalSystem) => 18,
+        Some(AccountKind::LocalService) => 19,
+        Some(AccountKind::NetworkService) => 20,
+        _ => return None,
+    };
+    // Revision 1, one sub-authority, NT authority (5, big endian), then the
+    // sub-authority (little endian)
+    let mut sid = vec![1, 1, 0, 0, 0, 0, 0, 5];
+    sid.extend_from_slice(&rid.to_le_bytes());
+    Some(sid)
 }
 
 /// Password to hand to ChangeServiceConfig when switching to `account`:
@@ -191,11 +218,31 @@ mod tests {
             lookup_account_name(Some("LocalService")),
             r"NT AUTHORITY\LOCAL SERVICE"
         );
-        assert_eq!(lookup_account_name(Some(r".\marco")), "marco");
+        let local = lookup_account_name(Some(r".\marco"));
+        assert!(local == "marco" || local.ends_with(r"\marco"), "{local}");
         assert_eq!(
             lookup_account_name(Some(r"NT SERVICE\Redmine")),
             r"NT SERVICE\Redmine"
         );
+    }
+
+    #[test]
+    fn builtin_sids() {
+        let sid = |rid: u8| vec![1, 1, 0, 0, 0, 0, 0, 5, rid, 0, 0, 0];
+        assert_eq!(builtin_sid(None), Some(sid(18)));
+        assert_eq!(builtin_sid(Some("LocalSystem")), Some(sid(18)));
+        assert_eq!(builtin_sid(Some(r"NT AUTHORITY\SYSTEM")), Some(sid(18)));
+        assert_eq!(builtin_sid(Some("LocalService")), Some(sid(19)));
+        assert_eq!(
+            builtin_sid(Some(r"NT AUTHORITY\NetworkService")),
+            Some(sid(20))
+        );
+        assert_eq!(
+            builtin_sid(Some(r"NT AUTHORITY\Network Service")),
+            Some(sid(20))
+        );
+        assert_eq!(builtin_sid(Some(r"NT SERVICE\Redmine")), None);
+        assert_eq!(builtin_sid(Some(r".\marco")), None);
     }
 
     #[test]

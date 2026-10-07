@@ -15,7 +15,7 @@ use std::ptr;
 use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR};
 use windows_sys::Win32::System::Registry::{
     HKEY, HKEY_LOCAL_MACHINE, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RRF_RT_REG_SZ,
-    RegCloseKey, RegCreateKeyExW, RegGetValueW, RegSetValueExW,
+    RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegGetValueW, RegSetValueExW,
 };
 
 use crate::pkg::config::ServiceConfig;
@@ -157,6 +157,28 @@ pub fn read_config(service: &str) -> io::Result<Option<ServiceConfig>> {
             .map(Some)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
         None => Ok(None),
+    }
+}
+
+/// The persisted configuration as it is stored, to restore it with
+/// [`restore_raw_config`] if a later change fails.
+pub fn read_raw_config(service: &str) -> io::Result<Option<String>> {
+    get_string(&parameters_key(service), CONFIG_VALUE)
+}
+
+/// Puts back a configuration read by [`read_raw_config`]: None removes it.
+pub fn restore_raw_config(service: &str, raw: Option<&str>) -> io::Result<()> {
+    let key = Key::create(&parameters_key(service))?;
+    match raw {
+        Some(text) => key.set_string(CONFIG_VALUE, text),
+        None => {
+            let value = wide(CONFIG_VALUE);
+            // Safety: the key is open and the name is nul terminated.
+            match unsafe { RegDeleteValueW(key.0, value.as_ptr()) } {
+                ERROR_FILE_NOT_FOUND => Ok(()),
+                status => check(status),
+            }
+        }
     }
 }
 

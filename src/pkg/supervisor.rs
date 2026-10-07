@@ -251,6 +251,8 @@ fn stop_gracefully(
 
     // Kept alive until the child exits: dropping it kills the stop command
     let mut _stop_process = None;
+    // Kept alive until the child exits: wsw ignores its own Ctrl+C meanwhile
+    let mut _ignore_ctrl_c = None;
     if let Some(stop_cmd) = &config.stop_cmd {
         info!("Running stop command: {}", stop_cmd);
         match spawn_shell_command(stop_cmd, config, env) {
@@ -259,8 +261,11 @@ fn stop_gracefully(
         }
     } else if foreground {
         // The child shares the terminal and got the user's Ctrl+C already
-    } else if let Err(e) = console::send_ctrl_c(pid) {
-        warn!("{}", e);
+    } else {
+        match console::send_ctrl_c(pid) {
+            Ok(guard) => _ignore_ctrl_c = Some(guard),
+            Err(e) => warn!("{}", e),
+        }
     }
 
     let started = Instant::now();

@@ -5,7 +5,9 @@ use windows_service::Error;
 use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
 
 pub fn handle() {
-    match list_services_with_status() {
+    let result = list_services_with_status();
+    let failed = result.is_err();
+    match result {
         Ok(services) => {
             if services.is_empty() {
                 println!("No services found.");
@@ -32,5 +34,8 @@ pub fn handle() {
         Err(e) => {
             eprintln!("Failed to list services: {:?}", e);
         }
+    }
+    if failed {
+        std::process::exit(1);
     }
 }

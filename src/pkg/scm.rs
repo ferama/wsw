@@ -15,7 +15,8 @@ use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 use windows_sys::Win32::System::Services::{
     ChangeServiceConfigW, QueryServiceConfig2W, SERVICE_CONFIG,
     SERVICE_CONFIG_DELAYED_AUTO_START_INFO, SERVICE_CONFIG_DESCRIPTION,
-    SERVICE_DELAYED_AUTO_START_INFO, SERVICE_DESCRIPTIONW, SERVICE_NO_CHANGE,
+    SERVICE_CONFIG_PRESHUTDOWN_INFO, SERVICE_DELAYED_AUTO_START_INFO, SERVICE_DESCRIPTIONW,
+    SERVICE_NO_CHANGE, SERVICE_PRESHUTDOWN_INFO,
 };
 
 use crate::pkg::account::{AccountKind, change_config_password, scm_account_name};
@@ -42,7 +43,8 @@ fn start_type_from_scm(start_type: ServiceStartType, delayed: bool) -> Option<St
     }
 }
 
-/// Applies the settings that are not part of CreateService/ChangeServiceConfig.
+/// Applies everything that is not part of CreateService/ChangeServiceConfig:
+/// the SCM settings first, then the rights of the account.
 /// `account` is the account the service runs as (None for LocalSystem), the
 /// one the rights are granted to.
 pub fn configure_service(
@@ -50,6 +52,28 @@ pub fn configure_service(
     scm: &ScmSettings,
     account: Option<&str>,
 ) -> windows_service::Result<()> {
+    apply_settings(service, scm)?;
+    grant_rights(scm, account)
+}
+
+fn to_service_actions(actions: &[ScmAction]) -> Vec<ServiceAction> {
+    actions
+        .iter()
+        .map(|action| match action {
+            ScmAction::Restart(delay) => ServiceAction {
+                action_type: ServiceActionType::Restart,
+                delay: *delay,
+            },
+            ScmAction::None => ServiceAction {
+                action_type: ServiceActionType::None,
+                delay: Duration::default(),
+            },
+        })
+        .collect()
+}
+
+/// The SCM settings set through ChangeServiceConfig2.
+fn apply_settings(service: &Service, scm: &ScmSettings) -> windows_service::Result<()> {
     service.set_delayed_auto_start(scm.start_type == StartType::DelayedAuto)?;
     service.set_preshutdown_timeout(scm.preshutdown_timeout)?;
     if let Some(description) = &scm.description {
@@ -57,19 +81,7 @@ pub fn configure_service(
     }
 
     if let Some(actions) = &scm.failure_actions {
-        let actions: Vec<ServiceAction> = actions
-            .iter()
-            .map(|action| match action {
-                ScmAction::Restart(delay) => ServiceAction {
-                    action_type: ServiceActionType::Restart,
-                    delay: *delay,
-                },
-                ScmAction::None => ServiceAction {
-                    action_type: ServiceActionType::None,
-                    delay: Duration::default(),
-                },
-            })
-            .collect();
+        let actions = to_service_actions(actions);
         let enabled = !actions.is_empty();
         service.update_failure_actions(ServiceFailureActions {
             reset_period: ServiceFailureResetPeriod::After(scm.failure_reset),
@@ -81,7 +93,13 @@ pub fn configure_service(
         // not only when its process crashes
         service.set_failure_actions_on_non_crash_failures(enabled)?;
     }
+    Ok(())
+}
 
+/// Grants the account its rights. Rights are only ever added, so they are
+/// granted before anything else changes on update: a failure (e.g. an
+/// account that cannot be resolved) then leaves the service untouched.
+fn grant_rights(scm: &ScmSettings, account: Option<&str>) -> windows_service::Result<()> {
     if scm.grant_logon_right
         && let Some(account) = account
     {
@@ -365,27 +383,184 @@ pub fn update_service(name: &str, changes: &ServiceConfig) -> windows_service::R
     };
     let image_path = crate::pkg::cmdline::join([executable.as_str(), "run", "--name", name]);
 
-    // The configuration must be in the registry before the ImagePath stops
-    // carrying it, or a failure in between would leave the service unusable
-    registry::write_config(name, &runtime).map_err(windows_service::Error::Winapi)?;
-    change_service_config(
-        &service,
-        &ConfigChange {
-            image_path: &image_path,
-            start_type: scm_start_type(scm.start_type),
-            dependencies: &scm.depends_on,
-            display_name: &scm.display_name,
-            account: account_change
-                .as_ref()
-                .map(|(name, password)| (name.as_str(), password.as_deref())),
-        },
-    )?;
-
     let account = match &account_change {
         Some(_) => scm.account_name.clone(),
         None => installed.account(),
     };
-    configure_service(&service, &scm, account.as_deref())
+    // Rights first: they only add permissions, and the account lookup is
+    // what most likely fails. Nothing else has changed yet if it does.
+    grant_rights(&scm, account.as_deref()).map_err(|e| {
+        windows_service::Error::Winapi(io::Error::other(format!("{} (no change applied)", e)))
+    })?;
+
+    let snapshot = Snapshot::take(&service, &installed)?;
+    let applied = (|| {
+        // The configuration must be in the registry before the ImagePath stops
+        // carrying it, or a failure in between would leave the service unusable
+        registry::write_config(name, &runtime).map_err(windows_service::Error::Winapi)?;
+        change_service_config(
+            &service,
+            &ConfigChange {
+                image_path: &image_path,
+                start_type: scm_start_type(scm.start_type),
+                dependencies: &scm.depends_on,
+                display_name: &scm.display_name,
+                account: account_change
+                    .as_ref()
+                    .map(|(name, password)| (name.as_str(), password.as_deref())),
+            },
+        )?;
+        apply_settings(&service, &scm)
+    })();
+
+    if let Err(e) = applied {
+        let rollback = snapshot.restore(&service, name, account_change.is_some());
+        return Err(windows_service::Error::Winapi(io::Error::other(
+            match rollback {
+                Ok(()) => format!("{} (no change applied)", e),
+                Err(rollback_error) => format!(
+                    "{}; restoring the previous configuration failed too: {}",
+                    e, rollback_error
+                ),
+            },
+        )));
+    }
+    Ok(())
+}
+
+/// The configuration of a service before an update, to put it back if the
+/// update fails halfway.
+struct Snapshot {
+    registry_config: Option<String>,
+    image_path: String,
+    start_type: ServiceStartType,
+    dependencies: Vec<String>,
+    display_name: String,
+    /// Account, if it can be restored (it has no password)
+    account: Option<String>,
+    delayed: bool,
+    description: Option<String>,
+    failure_actions: Option<ServiceFailureActions>,
+    failure_actions_on_non_crash: bool,
+    preshutdown_timeout: Option<Duration>,
+}
+
+impl Snapshot {
+    fn take(service: &Service, installed: &InstalledService) -> windows_service::Result<Self> {
+        let scm = &installed.scm;
+        let account = scm
+            .account_name
+            .as_ref()
+            .map(|account| account.to_string_lossy().to_string())
+            .unwrap_or_else(|| "LocalSystem".to_string());
+        Ok(Snapshot {
+            registry_config: registry::read_raw_config(&installed.name)
+                .map_err(windows_service::Error::Winapi)?,
+            image_path: scm.executable_path.to_string_lossy().to_string(),
+            start_type: scm.start_type,
+            dependencies: dependency_names(&scm.dependencies),
+            display_name: scm.display_name.to_string_lossy().to_string(),
+            account: (!AccountKind::classify(&account).requires_password()).then_some(account),
+            delayed: installed.start_type == Some(StartType::DelayedAuto),
+            description: installed.description.clone(),
+            failure_actions: installed.failure_actions.clone(),
+            failure_actions_on_non_crash: service
+                .get_failure_actions_on_non_crash_failures()
+                .unwrap_or(false),
+            preshutdown_timeout: query_preshutdown_timeout(service),
+        })
+    }
+
+    /// Puts everything back. `account_changed` tells whether the account
+    /// has to be restored too.
+    fn restore(&self, service: &Service, name: &str, account_changed: bool) -> io::Result<()> {
+        let mut errors: Vec<String> = Vec::new();
+        let mut check = |result: Result<(), String>| {
+            if let Err(e) = result {
+                errors.push(e);
+            }
+        };
+
+        check(
+            registry::restore_raw_config(name, self.registry_config.as_deref())
+                .map_err(|e| format!("registry: {}", e)),
+        );
+        let account = match (account_changed, &self.account) {
+            (false, _) => None,
+            (true, Some(account)) => {
+                Some((account.as_str(), change_config_password(account, None)))
+            }
+            (true, None) => {
+                check(Err(
+                    "the previous account has a password, set it again with --account-name"
+                        .to_string(),
+                ));
+                None
+            }
+        };
+        check(
+            change_service_config(
+                service,
+                &ConfigChange {
+                    image_path: &self.image_path,
+                    start_type: self.start_type,
+                    dependencies: &self.dependencies,
+                    display_name: &self.display_name,
+                    account: account
+                        .as_ref()
+                        .map(|(name, password)| (*name, password.as_deref())),
+                },
+            )
+            .map_err(|e| format!("service configuration: {}", e)),
+        );
+        check(
+            service
+                .set_delayed_auto_start(self.delayed)
+                .map_err(|e| format!("delayed start: {}", e)),
+        );
+        check(
+            service
+                .set_description(self.description.as_deref().unwrap_or(""))
+                .map_err(|e| format!("description: {}", e)),
+        );
+        if let Some(timeout) = self.preshutdown_timeout {
+            check(
+                service
+                    .set_preshutdown_timeout(timeout)
+                    .map_err(|e| format!("preshutdown timeout: {}", e)),
+            );
+        }
+        if let Some(failure_actions) = &self.failure_actions {
+            check(
+                service
+                    .update_failure_actions(ServiceFailureActions {
+                        reset_period: failure_actions.reset_period,
+                        reboot_msg: failure_actions.reboot_msg.clone(),
+                        command: failure_actions.command.clone(),
+                        actions: Some(failure_actions.actions.clone().unwrap_or_default()),
+                    })
+                    .and_then(|_| {
+                        service.set_failure_actions_on_non_crash_failures(
+                            self.failure_actions_on_non_crash,
+                        )
+                    })
+                    .map_err(|e| format!("recovery actions: {}", e)),
+            );
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(io::Error::other(errors.join("; ")))
+        }
+    }
+}
+
+fn query_preshutdown_timeout(service: &Service) -> Option<Duration> {
+    let buffer = query_config2(service, SERVICE_CONFIG_PRESHUTDOWN_INFO).ok()?;
+    // Safety: the buffer holds a SERVICE_PRESHUTDOWN_INFO.
+    let info = unsafe { &*(buffer.as_ptr() as *const SERVICE_PRESHUTDOWN_INFO) };
+    Some(Duration::from_millis(info.dwPreshutdownTimeout as u64))
 }
 
 /// Dependencies of a service as names, for display.
